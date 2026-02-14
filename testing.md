@@ -28,16 +28,30 @@ This document defines the testing strategy for the OBS Setup Plugin. It covers u
    * Mock OBS API failures
    * Ensure graceful fallback and rollback occurs
 
-**Tools:**
+**Framework:**
 
-* GoogleTest or Catch2 for C++
-* Mock OBS API interfaces (`obs_mock.h`)
-* CI runs all unit tests before merge
+* Use **Google Test (gtest)** for C++ unit testing
+* Catch2 can be considered for lightweight modules, but gtest is preferred for CI integration
+
+**Mock Strategy:**
+
+* Create mock headers for OBS API (`obs_mock.h`) implementing the same interface
+* Mock return values, simulate failures, and track calls for verification
+
+**Test Naming Convention:**
+
+* `ModuleName_FunctionalityUnderTest_ExpectedBehavior`
+* Example: `SettingsManager_CalculateBitrate_ReturnsSafeValue`
+
+**Coverage Requirements:**
+
+* Aim for **>80% code coverage** for all core modules (detection, settings, sources, filters, monitoring)
+* CI must report coverage; coverage <80% fails merge for critical modules
 
 **Notes:**
 
-* Testing raw calculation and decision logic is low overhead and highly valuable.
-* Mocking OBS calls prevents unsafe operations during automated testing.
+* Testing calculation and decision logic is low overhead and high value
+* Mocking OBS calls prevents unsafe operations during automated testing
 
 ---
 
@@ -48,23 +62,10 @@ This document defines the testing strategy for the OBS Setup Plugin. It covers u
 ### Scenarios:
 
 1. Profile & Scene Collection Creation
-
-   * Create new profiles on a clean OBS install
-   * Verify JSON files generated correctly
 2. Source Creation & Configuration
-
-   * Add video/audio sources
-   * Apply transformations and settings
 3. Filter Application
-
-   * CPU thresholds applied correctly in integrated setup
 4. Encoder Initialization
-
-   * Initialize selected encoders and verify availability
-5. Edge Cases
-
-   * Multi-GPU systems
-   * No webcam available
+5. Edge Cases (multi-GPU, no webcam)
 
 **Execution:**
 
@@ -74,8 +75,7 @@ This document defines the testing strategy for the OBS Setup Plugin. It covers u
 
 **Notes:**
 
-* Integration tests are critical because the plugin interacts with OBS objects that cannot be fully mocked.
-* Running on real OBS ensures crash avoidance before commits.
+* Integration tests ensure OBS object safety and avoid runtime crashes
 
 ---
 
@@ -83,21 +83,16 @@ This document defines the testing strategy for the OBS Setup Plugin. It covers u
 
 **Purpose:** Detect leaks and resource mismanagement.
 
-### Tools:
+**Tools:**
 
 * Linux: Valgrind, ASAN
 * Windows: Dr. Memory, Visual Studio Memory Diagnostics
 
-### Targets:
+**Targets:**
 
 * Plugin load/unload cycles
-* RAII wrappers correctness (OBS object release)
+* RAII wrapper correctness
 * Long-running sessions (>1 hour simulated)
-
-**Notes:**
-
-* Memory tests are critical for C++ OBS plugins due to the OBS C API and RAII wrapper usage.
-* Automated CI memory tests are recommended for Linux builds.
 
 ---
 
@@ -124,28 +119,19 @@ This document defines the testing strategy for the OBS Setup Plugin. It covers u
 * All settings applied correctly
 * Performance metrics within expected thresholds
 
-**Notes:**
-
-* System tests are essential for verifying assumptions on hardware capabilities and cross-platform encoder availability.
-* Automated VM testing is possible for Windows; physical machines preferred for GPU tests.
-
 ---
 
-## 5. CI/CD Recommendations
+## 5. CI/CD Integration Plan
 
-* Run unit tests for every PR
-* Run integration tests on nightly builds
-* Include memory checks on Linux CI using Valgrind/ASAN
-* Tag system tests for manual execution on real hardware
-
----
-
-## 6. Optional Considerations / Effort vs Value
-
-* **Low priority:** exhaustive combinations of every possible webcam/monitor configuration; most users fit standard setups
-* **High priority:** encoding, profile creation, OBS API interaction, memory safety, cross-platform support
+* **Unit Tests:** Run on every pull request; must pass before merge
+* **Integration Tests:** Run on nightly builds or pre-release testing
+* **Memory Tests:** Linux CI uses Valgrind/ASAN; Windows optionally with Dr. Memory
+* **Coverage Enforcement:** Core modules must have >80% coverage, reported in CI
+* **System Tests:** Marked for manual execution on physical or VM environments; automated where feasible (Windows VMs, Linux containers)
+* **Format/Conventions Check:** `clang-format` v15 applied in CI
+* **Fail Conditions:** Unit test failures, coverage <80%, or critical memory leaks block merge
 
 ---
 
 **Conclusion:**
-This testing strategy ensures the OBS Setup Plugin is robust, memory-safe, and compatible across hardware and OS configurations. It balances automated tests with necessary manual verification for integration and system-level behaviors.
+This strategy ensures robust, memory-safe, and cross-platform compatible plugin development. OBS API mocking, strict CI/CD enforcement, and coverage metrics maintain quality while balancing manual verification for system-level tests.
