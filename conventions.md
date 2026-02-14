@@ -136,10 +136,21 @@ OBSSourceAutoRelease holder(raw);
 
 ```cpp
 class OBSSourceAutoRelease {
-    obs_source_t* source;
+    obs_source_t* m_source;
 public:
-    explicit OBSSourceAutoRelease(obs_source_t* s) : source(s) {}
-    ~OBSSourceAutoRelease() { if (source) obs_source_release(source); }
+    explicit OBSSourceAutoRelease(obs_source_t* s) : m_source(s) {}
+    ~OBSSourceAutoRelease() { if (m_source) obs_source_release(m_source); }
+    
+    // Prevent copying
+    OBSSourceAutoRelease(const OBSSourceAutoRelease&) = delete;
+    OBSSourceAutoRelease& operator=(const OBSSourceAutoRelease&) = delete;
+    
+    // Allow moving
+    OBSSourceAutoRelease(OBSSourceAutoRelease&& other) noexcept 
+        : m_source(other.m_source) { other.m_source = nullptr; }
+    
+    obs_source_t* get() const { return m_source; }
+    operator obs_source_t*() const { return m_source; }
 };
 ```
 
