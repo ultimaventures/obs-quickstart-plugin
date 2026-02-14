@@ -7,12 +7,12 @@ This document outlines the architecture of the OBS Setup Plugin, designed to aut
 ```
 /src
   /detection      # System & encoder detection
-  /network        # Speed test wrapper
-  /profile        # Profile/scene collection creation
+  /network        # Upload speed assessment
+  /profile        # New profile & scene collection creation
   /settings       # Encoder, bitrate, resolution logic
   /sources        # Scene & source creation
-  /filters        # Audio filter application
-  /monitoring     # Recording/test & metrics
+  /filters        # Conditional audio filter application
+  /monitoring     # Local recording test & metrics
   /ui             # Setup dialog and user interaction
 ```
 
@@ -24,144 +24,272 @@ This document outlines the architecture of the OBS Setup Plugin, designed to aut
 
 **Purpose:** Identify available hardware, OS, GPU(s), and OBS-compatible encoders.
 
-**Flowchart Phases:** System Scan, Encoder Selection
-
 **Inputs:** OBS runtime environment, system hardware queries (CPU, GPU, RAM, monitors)
 
-**Outputs:** Available encoders, detected GPUs, monitor configurations, recommended default encoder
+**Outputs:** Detected encoders, GPUs, monitor configurations, recommended default encoder
 
-**Error Handling:** Warn if no compatible encoder found, fallback to software encoder, log hardware query errors
+**Error Handling:** Log errors, fallback to software encoder, graceful degradation
 
-**Unit Tests:** Simulate multiple GPU configurations, verify correct encoder mapping
+**Unit Tests:** Simulate multiple GPU configurations, verify encoder mapping
 
-### 2. /network – Speed Test Wrapper
+**API Surface:**
 
-**Purpose:** Determine optimal bitrate/resolution based on network speed.
+```cpp
+class SystemDetector {
+public:
+    struct EncoderInfo { /* ... */ };
+    std::vector<EncoderInfo> detectEncoders();
+    std::string getFirstWebcam();
+};
+```
 
-**Flowchart Phases:** Network Assessment → Bitrate/Resolution Suggestion
+---
 
-**Inputs:** Internet speed, latency/ping to streaming servers
+### 2. /network – Upload Speed Assessment
 
-**Outputs:** Suggested max bitrate, connection reliability metrics
+**Purpose:** Estimate sustainable upload bandwidth using public speed test APIs (no streaming).
 
-**Error Handling:** Timeout fallback to conservative bitrate, default safe profile on invalid speed test
+**Inputs:** Public speed test endpoint
 
-**Unit Tests:** Mock network latency and throughput variations, validate bitrate calculation logic
+**Outputs:** Estimated sustained upload bandwidth (70–80% multiplier)
 
-### 3. /profile – Profile & Scene Collection Creation
+**Error Handling:** Timeout fallback to conservative estimate, log errors
 
-**Purpose:** Create OBS profiles and scene collections programmatically.
+**Unit Tests:** Mock API responses, validate bandwidth calculations
 
-**Flowchart Phases:** Profile Setup → Scene Setup
+**API Surface:**
 
-**Inputs:** Detected hardware, streaming platform preferences, optional user defaults
+```cpp
+class NetworkTester {
+public:
+    double runSpeedTest(); // returns Mbps
+};
+```
 
-**Outputs:** OBS profile JSON, scene collection JSON
+---
 
-**Error Handling:** Fail gracefully if profile creation fails, rollback partial profile creation
+### 3. /profile – New Profile & Scene Collection Creation
 
-**Unit Tests:** Verify profile and scene JSON generation, test rollback scenarios
+**Purpose:** Create a NEW OBS profile and scene collection (never modify existing).
+
+**Inputs:** Hardware detection, user platform preferences
+
+**Outputs:**
+
+* NEW profile: `AutoSetup_Beginner_[Platform]_[Date]`
+* NEW scene collection
+
+**Critical:** Backup existing configuration before creating new profile
+
+**Error Handling:** Rollback profile creation on failure
+
+**Unit Tests:** Validate JSON creation, backup & rollback logic
+
+**API Surface:**
+
+```cpp
+class ProfileManager {
+public:
+    bool createNewProfile(const std::string& name);
+    bool backupExistingProfile();
+};
+```
+
+---
 
 ### 4. /settings – Encoder, Bitrate, Resolution Logic
 
 **Purpose:** Determine optimal OBS settings per system/network.
 
-**Flowchart Phases:** Bitrate & Resolution Selection → Encoder Configuration
+**Inputs:** Hardware info, network metrics, user streaming goals
 
-**Inputs:** Hardware detection, network metrics, user streaming goals
+**Outputs:** Encoder settings, resolution/FPS, keyframe interval, preset
 
-**Outputs:** Encoder settings, output resolution & FPS, keyframe interval, preset, rate control
+**Error Handling:** Validate OBS constraints, fallback to safe presets
 
-**Error Handling:** Fall back to safe presets, validate each setting against OBS constraints
+**Unit Tests:** Test CPU/GPU/network scenarios, validate limits
 
-**Unit Tests:** Test combinations of CPU/GPU/network scenarios, validate limits and fallback behavior
+**API Surface:**
 
-### 5. /sources – Scene & Source Creation
-
-**Purpose:** Automatically generate scenes and add sources (webcams, game capture, images).
-
-**Flowchart Phases:** Scene Setup → Source Addition
-
-**Inputs:** Scene collection, available sources, optional user preferences
-
-**Outputs:** Configured scenes with sources attached, source visibility, positioning, scaling
-
-**Error Handling:** Log missing or unsupported sources, skip invalid sources without aborting setup
-
-**Unit Tests:** Mock source discovery, validate scene hierarchy and source placement
-
-### 6. /filters – Audio Filter Application
-
-**Purpose:** Apply recommended filters (noise suppression, gain, compressor) to audio sources.
-
-**Flowchart Phases:** Audio Filter Setup
-
-**Inputs:** Audio sources, recommended filter presets
-
-**Outputs:** Configured filters attached to sources, validation of filter parameters
-
-**Error Handling:** Skip unsupported filters, warn if filter application fails
-
-**Unit Tests:** Validate filter attachment, test parameter bounds
-
-### 7. /monitoring – Recording Test & Metrics
-
-**Purpose:** Run a test recording/stream to validate settings.
-
-**Flowchart Phases:** Validation → Metrics Feedback
-
-**Inputs:** Configured profile and scene collection, test duration
-
-**Outputs:** Recording performance metrics (FPS, dropped frames, CPU/GPU load), success/failure flag
-
-**Error Handling:** Abort if recording fails, suggest adjusted settings
-
-**Unit Tests:** Simulate test recording, validate adjustment recommendations
-
-### 8. /ui – Setup Dialog & User Interaction
-
-**Purpose:** Provide guided setup flow and feedback to user.
-
-**Flowchart Phases:** User Interaction & Confirmation → Optional Manual Adjustments
-
-**Inputs:** Outputs from all previous modules, user input
-
-**Outputs:** Final configuration confirmation, optional logging/reporting
-
-**Error Handling:** Validate user input, graceful fallback if UI cannot load
-
-**Unit Tests:** Test UI flows with mock outputs, validate error dialogs
+```cpp
+class SettingsManager {
+public:
+    void applyEncoderSettings();
+    void calculateBitrate();
+};
+```
 
 ---
 
-## General Notes
+### 5. /sources – Scene & Source Creation
 
-* All modules should log operations for transparency and troubleshooting.
-* Each module must expose functions suitable for unit testing with dependency injection.
-* Modules should be loosely coupled to allow easy extension.
-* Edge cases (multiple GPUs, exotic Linux setups, multi-webcam setups) should be handled gracefully but may fall outside automation scope.
+**Purpose:** Generate scenes and add sources.
 
-[Flowchart](flowchart.md) Phase     → Module
--------------------------------------------------------
-System Scan / Hardware Detection → /detection
-Encoder Selection                 → /detection
-Network Assessment                → /network
-Bitrate/Resolution Suggestion     → /settings
-Profile Setup                     → /profile
-Scene Setup                        → /profile + /sources
-Source Addition                    → /sources
-Audio Filter Setup                 → /filters
-Validation / Test Recording        → /monitoring
-Metrics Feedback                   → /monitoring
-User Interaction / Confirmation    → /ui
-Optional Manual Adjustments        → /ui
+**Inputs:** Scene collection, available sources, user preferences
 
-Inputs/Outputs flow
-/detection -> hardware info, encoders -> /profile, /settings, /sources
-/network   -> network metrics       -> /settings
-/profile   -> profile/scene JSON    -> /sources
-/settings  -> encoder/bitrate/res   -> /sources, /monitoring
-/sources   -> configured scenes     -> /filters, /monitoring
-/filters   -> applied audio filters -> /monitoring
-/monitoring -> performance metrics  -> /ui
-/ui        -> final confirmation    -> user
+**Outputs:** Configured scenes with sources attached
+
+**Error Handling:** Log unsupported sources, skip invalid sources
+
+**Unit Tests:** Validate scene/source hierarchy and placement
+
+**API Surface:**
+
+```cpp
+class SourceManager {
+public:
+    bool addSourceToScene(const std::string& scene, const std::string& source);
+};
+```
+
+---
+
+### 6. /filters – Conditional Audio Filter Application
+
+**Purpose:** Apply audio filters based on CPU headroom
+
+**Inputs:** Audio sources, CPU usage from monitoring test
+
+**Outputs:** Applied filters
+
+**Logic:**
+
+* CPU < 60% → Apply RNNoise + Compressor + Limiter
+* CPU >= 60% → Apply Speex + Noise Gate only
+
+**Error Handling:** Skip individual filters if they fail, log errors
+
+**Unit Tests:** Validate conditional filter logic
+
+**API Surface:**
+
+```cpp
+class FilterManager {
+public:
+    void applyFilters(double cpuUsage);
+};
+```
+
+---
+
+### 7. /monitoring – Local Recording Test & Metrics
+
+**Purpose:** Run a 30-second local recording to validate settings (NO streaming)
+
+**Inputs:** Configured profile, scenes, sources, settings
+
+**Outputs:** Performance metrics: FPS, dropped frames, CPU/GPU load
+
+**Error Handling:** Abort on repeated failure, rollback partial setup
+
+**Unit Tests:** Simulate recording with mock metrics
+
+**API Surface:**
+
+```cpp
+class Monitor {
+public:
+    struct Metrics { double fps; double cpuLoad; int droppedFrames; };
+    Metrics runLocalRecordingTest(int durationSeconds);
+};
+```
+
+---
+
+### 8. /ui – Setup Dialog & User Interaction
+
+**Purpose:** Guided wizard for setup and confirmation
+
+**Inputs:** Module outputs, user preferences
+
+**Outputs:** Final configuration confirmation
+
+**Error Handling:** Validate input, fallback if UI fails
+
+**Unit Tests:** Test wizard flow, error dialogs
+
+**API Surface:**
+
+```cpp
+class SetupWizard : public QDialog {
+    Q_OBJECT
+public:
+    void startWizard();
+signals:
+    void setupCompleted(bool success);
+};
+```
+
+---
+
+## C++ Implementation Requirements
+
+### Memory Management
+
+* Use RAII for OBS objects
+* Release via obs_*_release() or auto-release wrappers
+* No raw pointers without clear ownership
+
+### Thread Safety
+
+* All OBS API calls on main thread
+* Qt::QueuedConnection for cross-thread calls
+* Worker threads only for network/performance tests
+
+### Qt Integration
+
+* UI uses Qt5/Qt6 widgets
+* QDialog with QWizard pattern
+* Signals/slots for UI updates
+
+### Error Handling
+
+* Check all OBS API return values
+* Log via blog()
+* Graceful degradation allowed
+
+---
+
+## Execution Order & Dependencies
+
+1. /detection (no dependencies)
+2. /network (parallel possible)
+3. /settings (depends on detection & network)
+4. /profile (depends on settings)
+5. /sources (depends on profile & detection)
+6. /filters (depends on sources & monitoring)
+7. /monitoring (depends on profile, settings, sources)
+8. /ui (orchestrates all modules)
+
+**Critical:** /profile before applying settings; /monitoring after initial setup
+
+---
+
+## Error Recovery
+
+1. Do not leave partial config
+2. Delete created profile if not finalized
+3. Restore previous active profile
+4. Log failure reason
+5. Show user-friendly error message
+
+**Triggers:** Encoder init fails, recording test fails 3+ times, user cancels, critical exceptions
+
+---
+
+## Plugin Configuration
+
+**Storage:** $OBS_CONFIG/plugin_config/obs-setup/config.json
+**Format:** JSON
+
+**Stores:** Last used settings, user preferences, plugin version
+**Never Stores:** Stream keys, OAuth tokens, PII
+
+---
+
+## Error Handling Pattern
+
+1. Log error with context
+2. Attempt graceful degradation
+3. If critical, abort and rollback
+4. Report user-actionable message
