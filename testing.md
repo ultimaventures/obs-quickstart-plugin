@@ -1,6 +1,6 @@
 # OBS Setup Plugin Testing Strategy
 
-This document defines the testing strategy for the OBS Setup Plugin. It covers unit, integration, memory, and system tests, aligned with the project stack, architecture, and coding conventions.
+This document defines the testing strategy for the OBS Setup Plugin. It covers unit, integration, memory, system, and UI tests, aligned with the project stack, architecture, and coding conventions.
 
 ---
 
@@ -28,30 +28,38 @@ This document defines the testing strategy for the OBS Setup Plugin. It covers u
    * Mock OBS API failures
    * Ensure graceful fallback and rollback occurs
 
-**Framework:**
+**Framework:** Google Test (gtest) for C++
 
-* Use **Google Test (gtest)** for C++ unit testing
-* Catch2 can be considered for lightweight modules, but gtest is preferred for CI integration
+**Mock Implementation Strategy:**
 
-**Mock Strategy:**
+* **Option A (Recommended):** Wrap OBS API calls in thin interfaces and mock the wrapper.
+* Example:
 
-* Create mock headers for OBS API (`obs_mock.h`) implementing the same interface
-* Mock return values, simulate failures, and track calls for verification
+```cpp
+class IOBSInterface { virtual obs_source_t* createSource(...) = 0; };
+class OBSReal : public IOBSInterface { /* calls real OBS */ };
+class OBSMock : public IOBSInterface { /* controlled test data */ };
+```
 
-**Test Naming Convention:**
+* Avoid mocking OBS internals or callbacks
 
-* `ModuleName_FunctionalityUnderTest_ExpectedBehavior`
+**Test Naming Convention:** `ModuleName_FunctionalityUnderTest_ExpectedBehavior`
 * Example: `SettingsManager_CalculateBitrate_ReturnsSafeValue`
 
-**Coverage Requirements:**
+**Coverage Requirement:** >80% for core modules (detection, settings, sources, filters, monitoring)
 
-* Aim for **>80% code coverage** for all core modules (detection, settings, sources, filters, monitoring)
-* CI must report coverage; coverage <80% fails merge for critical modules
+**Unit Test Examples:**
 
-**Notes:**
-
-* Testing calculation and decision logic is low overhead and high value
-* Mocking OBS calls prevents unsafe operations during automated testing
+```cpp
+TEST(SystemDetector, DetectEncoders_NvencAvailable_ReturnsNvencFirst) {
+    OBSMock mockOBS;
+    mockOBS.setAvailableEncoders({"ffmpeg_nvenc", "obs_x264"});
+    SystemDetector detector(mockOBS);
+    auto encoders = detector.detectEncoders();
+    ASSERT_GE(encoders.size(), 1);
+    EXPECT_EQ(encoders[0].id, "ffmpeg_nvenc");
+}
+```
 
 ---
 
@@ -69,30 +77,48 @@ This document defines the testing strategy for the OBS Setup Plugin. It covers u
 
 **Execution:**
 
+* Install OBS Studio, set `OBS_TEST_MODE=1`
+* Use headless mode (Xvfb on Linux)
+* Run via scripts (`./run_integration_tests.sh` Linux, `obs-test-runner.exe` Windows)
 * Use temporary OBS profiles to avoid altering user data
 * Automated tests via OBS API when possible
 * Manual verification for complex GUI workflows
+* Clean up test profiles after execution
 
-**Notes:**
+**Test Examples:**
 
-* Integration tests ensure OBS object safety and avoid runtime crashes
+```cpp
+TEST_F(ProfileIntegrationTest, CreateProfile_ExistingProfilePresent_LeavesOriginalUntouched) {
+    obs_frontend_set_current_profile("UserProfile");
+    ProfileManager pm;
+    ASSERT_TRUE(pm.createNewProfile("AutoSetup_Test"));
+    EXPECT_TRUE(profileExists("UserProfile"));
+    EXPECT_EQ(obs_frontend_get_current_profile(), "AutoSetup_Test");
+    obs_frontend_remove_profile("AutoSetup_Test");
+}
+```
+
+* Include source creation, filter application, encoder init, edge cases
 
 ---
 
 ## 3. Memory Tests
 
-**Purpose:** Detect leaks and resource mismanagement.
+**Tools:** Valgrind (Linux), Dr. Memory (Windows)
 
-**Tools:**
+**Focus:**
 
-* Linux: Valgrind, ASAN
-* Windows: Dr. Memory, Visual Studio Memory Diagnostics
+* Match every `obs_source_create()` / `obs_source_release()`
+* Plugin unload, wizard cancel
+* Long-running sessions
 
-**Targets:**
+**Example Valgrind Command:**
 
-* Plugin load/unload cycles
-* RAII wrapper correctness
-* Long-running sessions (>1 hour simulated)
+```bash
+valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --log-file=valgrind.log obs --portable
+```
+
+**CI:** Nightly runs, any new leaks block release
 
 ---
 
@@ -121,6 +147,65 @@ This document defines the testing strategy for the OBS Setup Plugin. It covers u
 
 ---
 
+## 5. UI Testing
+
+**Manual:** Walkthrough wizard, input validation, error dialogs, cancel/back behavior
+
+**Automated (Optional):** Qt Test framework
+
+```cpp
+QTest::mouseClick(wizard.platformComboBox, Qt::LeftButton);
+QTest::keyClicks(wizard.platformComboBox, "Twitch");
+QCOMPARE(wizard.getSelectedPlatform(), "Twitch");
+```
+
+**Checklist:** Buttons clickable, inputs validated, progress updated, cancel works, errors clear
+
+---
+
+## 6. Thread Safety Testing
+
+**Techniques:**
+
+* Thread Sanitizer (TSan) for race detection
+* Manual simulation of concurrent network/UI operations
+* Stress testing worker threads
+
+**CI:** Run TSan on Linux CI; flag all races
+
+---
+
+## 7. Test Organization & Commands
+
+**Directory Structure:**
+
+```
+/tests
+  /unit
+  /integration
+  /mocks
+  /fixtures
+  CMakeLists.txt
+```
+
+**Commands:**
+
+* Unit: `./tests/unit_tests --gtest_filter=*`
+* Integration: `./tests/integration_tests`
+* Coverage: `make coverage`
+* CI example:
+
+```yaml
+test:
+  script:
+    - cmake -DCMAKE_BUILD_TYPE=Debug ..
+    - make
+    - ctest --output-on-failure
+    - make coverage
+```
+
+---
+
 ## 5. CI/CD Integration Plan
 
 * **Unit Tests:** Run on every pull request; must pass before merge
@@ -131,7 +216,5 @@ This document defines the testing strategy for the OBS Setup Plugin. It covers u
 * **Format/Conventions Check:** `clang-format` v15 applied in CI
 * **Fail Conditions:** Unit test failures, coverage <80%, or critical memory leaks block merge
 
----
-
 **Conclusion:**
-This strategy ensures robust, memory-safe, and cross-platform compatible plugin development. OBS API mocking, strict CI/CD enforcement, and coverage metrics maintain quality while balancing manual verification for system-level tests.
+Provides actionable detail for inexperienced developers to implement, run, and maintain unit, integration, memory, system, and UI tests. Ensures OBS API safety, memory correctness, thread safety, and cross-platform reliability.
