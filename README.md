@@ -34,7 +34,143 @@ Use examples liberally, and show the expected output if you can. It's helpful to
 Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
 
 ## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+### 1) **Set Up Project Skeleton**
+```
+/obs-setup
+  /src
+    /detection (empty for now)
+    /network
+    /profile
+    /settings
+    /sources
+    /filters
+    /monitoring
+    /ui
+  /tests
+    /unit
+    /integration
+  CMakeLists.txt
+  README.md
+  architecture.md ✅
+  CONVENTIONS.md (TODO)
+  TESTING.md (TODO)
+```
+### 2) Proof of Concept Task
+Before Sprint 1 starts, someone must:
+
+* Clone obs-plugintemplate
+* Build a basic C++ plugin that loads in OBS
+* Add menu item "Tools > OBS Setup Test"
+* Show a Qt dialog saying "Hello World"
+* Log "Plugin loaded" to OBS log
+* Detect one encoder and log it
+
+Success criteria: Plugin compiles, loads without crashing OBS, shows dialog.
+
+### 3. Consolidated Subtasks/Sprints
+
+#### Sprint 1: Foundation / System Detection (Week 3-4)
+**Module: SystemDetector**
+- Detect available encoders (NVENC, AMF, QSV, x264)
+- Determine encoder priority and handle missing encoders
+- Detect first available webcam (device ID)
+- Collect CPU & GPU info
+- Tests:
+  - Mock different hardware configurations
+  - Verify encoder priority: NVENC > AMF > QSV > x264
+  - Handle missing encoders gracefully
+
+**Module: SpeedTestWrapper**
+- Optional speed test for upload bandwidth
+- Handles network errors gracefully
+- Returns estimated speed in Mbps
+- Test: Returns plausible speed, fallback if network blocked
+
+**Module: ProfileManager**
+- Create new profile (e.g., "AutoSetup_Beginner_[Platform]") without modifying existing profiles
+- Create new scene collection (e.g., "Beginner_Stream_Setup")
+- Switch to new profile
+- Apply calculated settings to profile
+- Test: Profile and collection created successfully, original untouched
+
+---
+
+#### Sprint 2: Core Logic / Settings Engine (Week 5-6)
+**Module: SettingsCalculator**
+- Calculate optimal resolution, FPS, bitrate based on:
+  - Upload speed
+  - Encoder type
+  - CPU cores
+- Tests:
+  - Given 7000 kbps → outputs 720p60 @ 4500 kbps
+  - No hardware encoder → uses x264 ultrafast
+  - CPU-limited systems → lower settings
+
+**Module: PerformanceMonitor**
+- Record local test for 30 seconds
+- Monitor CPU usage, GPU load, dropped frames, rendered frames
+- Determine system stability
+- Retry logic: max 3 attempts
+- Fallback: minimum config if unstable after retries
+  - 720p30 @ 2500 kbps, x264 ultrafast
+- Tests:
+  - Returns correct metrics
+  - Determines stability according to thresholds
+
+---
+
+#### Sprint 3: Scene Creation (Week 11-12)
+**Module: SceneBuilder**
+- Create scene structure: Starting Soon, Live, BRB, Ending
+- Add placeholder sources:
+  - Game Capture (mode: fullscreen app; may require user config)
+  - Webcam (first detected device)
+  - Placeholder text overlays (e.g., "Configure game capture", "Stream title")
+- Tests:
+  - Scene structure created
+  - Placeholder sources added correctly
+
+---
+
+#### Sprint 4: Audio Filters (Week 13-14)
+**Module: AudioFilterManager**
+- Apply conditional audio filters based on CPU headroom:
+  - CPU usage during recording test < 60% → RNNoise + Compressor + Limiter
+  - CPU usage ≥ 60% → Speex + Noise Gate only
+- Methods:
+  - `addRNNoise()`, `addSpeex()`, `addCompressor()`, `addLimiter()`
+- Tests:
+  - Filters applied according to CPU thresholds
+
+---
+
+#### Sprint 5: UI / Setup Wizard (Week 15-16)
+**Module: SetupWizard (Qt)**
+- Collect user inputs:
+  - Content type (Gaming/IRL/Just Chatting)
+  - Platform(s) (Twitch/YouTube/Both/Other)
+  - Stream key presence
+  - Upload speed (optional, can use speed test)
+- Show summary of calculated settings
+- Display reminders / next steps:
+  - Configure game capture
+  - Add stream key if not present
+- Tests:
+  - Correct user input captured
+  - Summary displayed correctly
+
+---
+
+#### Sprint 6: Integration & Final Validation
+- Integrate all modules:
+  - System detection → Settings calculation → Profile creation → Scene & sources → Audio filters → UI wizard
+- Run end-to-end test with:
+  - Multiple hardware configurations
+  - Different CPU/GPU loads
+  - Optional network speed input
+- Validate fallback behavior
+- Validate max retries and minimum config fallback
+
 
 ## Contributing
 State if you are open to contributions and what your requirements are for accepting them.
