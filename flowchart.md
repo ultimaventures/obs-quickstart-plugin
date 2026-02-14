@@ -83,12 +83,47 @@
 
 ## Phase 6: Create Scene Structure
 
-1. [Create Scenes] → Starting Soon, Live, BRB, Ending Soon
-2. Live Scene Placeholder Sources:
+1. [Create Scenes] → Starting Soon, Gameplay w/camera, Gameplay w/o camera, Just Chatting, BRB, Ending Soon
+2. Gameplay w/camera Scene Placeholder Sources:
+   * Game capture
+      * Game Capture source (unconfigured - will show black screen)
+      * Mode: Capture specific window
+      * Window: [Not Set]
+      * Text overlay on scene: "Right-click Game Capture → Properties to select your game"
+   * Webcam
+      * If webcam detected:
+         * Add Video Capture Device source
+         * Set to first detected device (auto-configured, works immediately)
+      * If no webcam detected:
+         * Skip adding webcam source entirely
+         * Add text source: "No webcam detected - Right-click Camera Feed → Properties to select your camera"
+3. Gameplay w/o camera Scene Placeholder Sources:
+   * Game capture - larger than "Gameplay w/camera" scene, uses different overlay
+      * Game Capture source (unconfigured - will show black screen)
+      * Mode: Capture specific window
+      * Window: [Not Set]
+      * Text overlay on scene: "Right-click Game Capture → Properties to select your game"
+4. Just Chatting Scene Placeholder Sources
+   * Uses same overlay as "Gameplay w/o camera"
+   * replaces Game capture placeholder with camera feed or placeholder
+5. Overlays → [Show dialog]: "Do you have custom overlays?"
+   - Yes → Proceed to individual selection
+   - No → Use bundled defaults
+   * IF Yes: For each scene type:
+      * [Prompt]: "Select overlay for Starting Soon scene (or click Skip to use default)"
+      * [File picker opens, remembers last directory]
+      * [User selects file OR clicks Skip]
+      * [Preview shown if file selected]
+      * [Repeat for: BRB, Ending Soon, Gameplay overlays, etc.]
+6. [Set source order/Z-order in scenes]:
+      1. Game Capture (bottom layer)
+      2. Webcam (top layer, positioned in corner)
+      3. Overlays (frames, borders - top layer)
+      4. Text overlays (instructions - topmost)
 
-   * Game Capture → Fullscreen app, unconfigured
-   * Webcam → First detected device
-   * Text overlays → "Stream title" and "Configure game capture"
+   [Set reasonable defaults]:
+      - Webcam: 320x240, positioned bottom-right corner
+      - Overlays: Full-screen 1920x1080
 
 ---
 
