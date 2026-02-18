@@ -174,24 +174,56 @@ public:
 
 ### 7. /monitoring – Local Recording Test & Metrics
 
-**Purpose:** Run a 30-second local recording to validate settings (NO streaming)
+**CRITICAL: Asynchronous Execution Required**
 
-**Inputs:** Configured profile, scenes, sources, settings
+The 30-second recording test MUST NOT block the main thread:
 
-**Outputs:** Performance metrics: FPS, dropped frames, CPU/GPU load
+**Implementation Pattern:**
+1. Start recording on main thread (OBS API requirement)
+2. Start Qt timer on main thread to poll metrics every 1 second
+3. Collect metrics in background (CPU/GPU stats don't need OBS API)
+4. After 30 seconds, stop recording on main thread
+5. Report results via Qt signals to UI
 
-**Error Handling:** Abort on repeated failure, rollback partial setup
-
-**Unit Tests:** Simulate recording with mock metrics
-
-**API Surface:**
-
+**Example:**
 ```cpp
-class Monitor {
+class Monitor : public QObject {
+    Q_OBJECT
 public:
-    struct Metrics { double fps; double cpuLoad; int droppedFrames; };
-    Metrics runLocalRecordingTest(int durationSeconds);
+    void startRecordingTest() {
+        // Main thread - start recording
+        obs_frontend_recording_start();
+        
+        // Start timer for polling (non-blocking)
+        m_pollTimer.start(1000); // Poll every 1 second
+    }
+
+signals:
+    void metricsUpdated(const Metrics& m);
+    void testComplete(bool success);
+
+private slots:
+    void pollMetrics() {
+        // Check CPU/GPU stats (can be done off main thread)
+        Metrics m = collectMetrics();
+        emit metricsUpdated(m);
+        
+        if (++m_secondsElapsed >= 30) {
+            m_pollTimer.stop();
+            obs_frontend_recording_stop(); // Main thread
+            emit testComplete(true);
+        }
+    }
 };
+```
+
+**UI Integration:**
+```cpp
+// Wizard shows progress bar during test
+connect(monitor, &Monitor::metricsUpdated, [](const Metrics& m) {
+    progressBar->setValue(m.secondsElapsed);
+    cpuLabel->setText(QString("CPU: %1%").arg(m.cpuUsage));
+});
 ```
 
 ---
