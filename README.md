@@ -35,6 +35,7 @@ Tell people where they can go to for help. It can be any combination of an issue
 
 ## Roadmap
 ### 1) **Set Up Project Skeleton**
+In addition to directory structures from [OBS Plugin Template](https://github.com/obsproject/obs-plugintemplate)
 ```
 /obs-setup
   /src
@@ -69,6 +70,28 @@ Success criteria: Plugin compiles, loads without crashing OBS, shows dialog.
 
 ### 3. Consolidated Subtasks/Sprints
 
+#### Pre-sprint setup
+- Update CMakeLists.txt:
+  - Change project name to obs-setup
+  - Add subdirectories
+  - Set version, author, etc.
+- GitHub Actions → GitLab CI/CD Translation
+  - obs-plugintemplate includes:
+    ```
+    .github/workflows/build.yml
+    .github/workflows/release.yml
+    ```
+  - We'll create:
+    ```
+    .gitlab-ci.yml
+    ```
+- Test local build:
+  ```
+  bash   cmake -B build
+  cmake --build build
+  ```
+  Should compile and load in OBS (even if it does nothing yet)
+
 #### Sprint 1: Foundation / System Detection (Week 3-4)
 **Module: SystemDetector**
 - Detect available encoders (NVENC, AMF, QSV, x264)
@@ -94,6 +117,15 @@ Success criteria: Plugin compiles, loads without crashing OBS, shows dialog.
 - Test: Profile and collection created successfully, original untouched
 
 ---
+
+#### When to add CI/CD:
+- After Sprint 1 completes (basic modules working locally)
+- Before merging to main branch
+- When we need automated testing
+
+**Where to document it:**
+- Create CI-CD.md or DEPLOYMENT.md separate from architecture
+- Don't clutter architecture docs with build pipeline details
 
 #### Sprint 2: Core Logic / Settings Engine (Week 5-6)
 **Module: SettingsCalculator**
