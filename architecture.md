@@ -14,6 +14,13 @@ This document outlines the architecture of the OBS Setup Plugin, designed to aut
   /filters        # Conditional audio filter application
   /monitoring     # Local recording test & metrics
   /ui             # Setup dialog and user interaction
+  plugin-main.c
+  plugin-support.c
+  plugin-support.h
+  /data
+    /locale
+  /cmake
+  CMakeLists.txt
 ```
 
 ---
@@ -22,24 +29,111 @@ This document outlines the architecture of the OBS Setup Plugin, designed to aut
 
 ### 1. /detection – System & Encoder Detection
 
-**Purpose:** Identify available hardware, OS, GPU(s), and OBS-compatible encoders.
+**Purpose:** Detect available hardware and recommend encoder
 
-**Inputs:** OBS runtime environment, system hardware queries (CPU, GPU, RAM, monitors)
+**What We Can Detect:**
+- ✅ CPU core count (via `std::thread::hardware_concurrency()`)
+- ✅ Available encoders (via OBS encoder enumeration)
+- ✅ Which platform (Windows/macOS/Linux)
 
-**Outputs:** Detected encoders, GPUs, monitor configurations, recommended default encoder
+**Detection Strategy:**
+
+**Simple Binary Classification:**
+```cpp
+struct HardwareInfo {
+    int cpuCores;              // Actual count from system
+    std::string bestEncoder;   // Best available from OBS
+    bool hasHardwareEncoder;   // NVENC/AMF/QSV/VideoToolbox exists?
+};
+```
+
+**Encoder Priority (automatically determined by OBS availability):**
+1. Check if NVENC exists → use it
+2. Check if AMF exists → use it
+3. Check if QSV exists → use it
+4. Check if VideoToolbox exists → use it
+5. Fall back to x264
 
 **Error Handling:** Log errors, fallback to software encoder, graceful degradation
 
 **Unit Tests:** Simulate multiple GPU configurations, verify encoder mapping
+
+**Encoder Priority by Platform:**
+
+**Windows:**
+1. NVENC (NVIDIA RTX 2000+)
+2. AMF (AMD RX 5000+)
+3. QSV (Intel 7th gen+)
+4. x264 (software fallback)
+
+**macOS:**
+1. VideoToolbox (Apple Silicon M1/M2/M3 - native hardware)
+2. VideoToolbox (Intel Mac with T2 chip)
+3. x264 (software fallback for older Macs)
+
+**Linux:**
+1. VAAPI (Intel/AMD)
+2. NVENC (NVIDIA with proprietary drivers)
+3. x264 (software fallback)
+
+**Detection Logic:**
+```cpp
+std::vector SystemDetector::detectEncoders() {
+    std::vector encoders;
+    
+#ifdef __APPLE__
+    // macOS - check VideoToolbox first
+    if (isVideoToolboxAvailable()) {
+        encoders.push_back({
+            "com.apple.videotoolbox.videoencoder.h264",
+            "VideoToolbox H.264",
+            true,
+            100  // Highest priority
+        });
+    }
+#endif
+
+#ifdef _WIN32
+    // Windows - check NVENC
+    if (isNvencAvailable()) {
+        encoders.push_back({
+            "ffmpeg_nvenc",
+            "NVIDIA NVENC H.264",
+            true,
+            90
+        });
+    }
+    // ... AMD, QSV
+#endif
+
+    // Software fallback (all platforms)
+    encoders.push_back({
+        "obs_x264",
+        "Software x264",
+        true,
+        10  // Lowest priority
+    });
+    
+    return encoders;
+}
+```
+
+**Apple Silicon Considerations:**
+- VideoToolbox on M1/M2/M3 is FASTER and higher quality than x264
+- Must be default choice on Apple Silicon
+- Different quality presets than NVENC/AMF
+- Test on actual Mac hardware (not just CI)
 
 **API Surface:**
 
 ```cpp
 class SystemDetector {
 public:
-    struct EncoderInfo { /* ... */ };
-    std::vector<EncoderInfo> detectEncoders();
+    HardwareInfo detect();
     std::string getFirstWebcam();
+private:
+    std::string detectBestEncoder();
+    bool encoderExists(const std::string& encoderId);
 };
 ```
 
@@ -47,15 +141,57 @@ public:
 
 ### 2. /network – Upload Speed Assessment
 
-**Purpose:** Estimate sustainable upload bandwidth using public speed test APIs (no streaming).
+**Purpose:** Estimate sustained upload bandwidth using public speed test APIs
 
-**Inputs:** Public speed test endpoint
+**Inputs:** Public speed test endpoint (speedtest.net or similar)
 
-**Outputs:** Estimated sustained upload bandwidth (70–80% multiplier)
+**Outputs:** Estimated sustained upload bandwidth (70-80% multiplier applied)
 
-**Error Handling:** Timeout fallback to conservative estimate, log errors
+**CRITICAL: Timeout & Security Requirements**
 
-**Unit Tests:** Mock API responses, validate bandwidth calculations
+**Timeout Limits:**
+- Connection timeout: 5 seconds
+- Total test timeout: 30 seconds maximum
+- No retries on failure - fail fast
+
+**SSL Verification:**
+- MUST verify SSL certificates for speed test endpoints
+- Reject self-signed certificates
+- Use system certificate store
+
+**Error Handling:**
+- Network unreachable → Default to 3500 kbps (safe minimum)
+- Firewall/proxy blocks request → Default to 3500 kbps
+- API rate limit (429) → Default to 3500 kbps
+- Timeout → Default to 3500 kbps
+- Any error → Log, show user warning, proceed with defaults
+
+**Fallback Behavior:**
+```cpp
+double NetworkTester::runSpeedTest() {
+    try {
+        httplib::Client client("https://speedtest.net");
+        client.set_connection_timeout(5);  // 5 second connect
+        client.set_read_timeout(30);       // 30 second total
+        
+        auto result = client.Post("/test", payload);
+        if (result && result->status == 200) {
+            return parseSpeed(result->body);
+        }
+    } catch (const std::exception& e) {
+        blog(LOG_WARNING, "[Network] Speed test failed: %s", e.what());
+    }
+    
+    // Always return safe default on any error
+    blog(LOG_INFO, "[Network] Using conservative default: 3500 kbps");
+    return 3500.0; // Conservative minimum
+}
+```
+
+**UI Messaging:**
+- Show spinner: "Testing upload speed... (30 sec max)"
+- On failure: "Speed test unavailable, using conservative defaults"
+- Allow skip button: User can skip speed test entirely
 
 **API Surface:**
 
@@ -95,13 +231,62 @@ public:
 };
 ```
 
+**Possible solution for Video Capture Device with Placeholder**
+
+```// Add Video Capture Device source (will show error/black)
+obs_source_t* cameraSource = obs_source_create(
+    "dshow_input",  // Windows
+    "Camera Feed",
+    nullptr,
+    nullptr
+);
+obs_scene_add(scene, cameraSource);
+
+// Add text overlay explaining how to configure
+obs_source_t* textSource = obs_source_create(
+    "text_gdiplus",
+    "Camera Setup Instructions",
+    textSettings,
+    nullptr
+);
+// Text: "No camera detected\nRight-click 'Camera Feed' → Properties to select device"
+```
+
 ---
 
 ### 4. /settings – Encoder, Bitrate, Resolution Logic
 
 **Purpose:** Determine optimal OBS settings per system/network.
 
-**Inputs:** Hardware info, network metrics, user streaming goals
+**Input:** HardwareInfo from detection module
+
+**Decision Logic (Simple Rules):**
+
+**If hardware encoder available:**
+- Resolution: 1920x1080
+- FPS: 60
+- Bitrate: 6000 kbps
+- Encoder: Detected hardware encoder
+- Preset: "quality" or equivalent
+
+**If software encoding + CPU >= 8 cores:**
+- Resolution: 1280x720
+- FPS: 60
+- Bitrate: 4500 kbps
+- Encoder: obs_x264
+- Preset: "veryfast"
+
+**If software encoding + CPU < 8 cores:**
+- Resolution: 1280x720
+- FPS: 30
+- Bitrate: 2500 kbps
+- Encoder: obs_x264
+- Preset: "ultrafast"
+
+**Philosophy:**
+Binary classification only: hardware encoder OR software encoder.
+No complex GPU tier detection - not worth the maintenance burden.
+Settings are conservative starting points, not final configuration.
 
 **Outputs:** Encoder settings, resolution/FPS, keyframe interval, preset
 
@@ -325,3 +510,18 @@ signals:
 2. Attempt graceful degradation
 3. If critical, abort and rollback
 4. Report user-actionable message
+
+## Project Foundation
+
+This plugin is built using the [OBS Plugin Template](https://github.com/obsproject/obs-plugintemplate) as a foundation, with the following customizations:
+
+- Extended directory structure for modular architecture
+- GitLab CI/CD instead of GitHub Actions
+- Custom module organization (detection, network, profile, etc.)
+- Qt wizard UI integration
+
+The template provides:
+- CMake build system
+- Cross-platform compilation support
+- Plugin entry point boilerplate
+- Release packaging configuration

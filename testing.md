@@ -87,6 +87,7 @@ TEST(SystemDetector, DetectEncoders_NvencAvailable_ReturnsNvencFirst) {
 
 **Test Examples:**
 
+**Test:** Profile creation
 ```cpp
 TEST_F(ProfileIntegrationTest, CreateProfile_ExistingProfilePresent_LeavesOriginalUntouched) {
     obs_frontend_set_current_profile("UserProfile");
@@ -97,12 +98,51 @@ TEST_F(ProfileIntegrationTest, CreateProfile_ExistingProfilePresent_LeavesOrigin
     obs_frontend_remove_profile("AutoSetup_Test");
 }
 ```
+**Test:** Source creation with auto-detected webcam
+```cpp
+TEST_F(SourceIntegrationTest, CreateWebcam_DeviceDetected_AddsToScene) {
+    // Setup: Ensure webcam available
+    ASSERT_TRUE(hasWebcamDevice());
+    
+    // Execute: Create webcam source
+    SourceManager sm;
+    ASSERT_TRUE(sm.addWebcamSource("Live", "Webcam"));
+    
+    // Verify: Source exists in scene
+    obs_source_t* scene = obs_get_source_by_name("Live");
+    EXPECT_TRUE(sceneContainsSource(scene, "Webcam"));
+    obs_source_release(scene);
+}
+```
+
+**Test:** Filter application conditional on CPU
+```cpp
+TEST_F(FilterIntegrationTest, ApplyFilters_HighCPU_UsesSpeexNotRNNoise) {
+    // Mock high CPU usage
+    mockMonitor.setCPUUsage(75.0);
+    
+    // Execute: Apply filters
+    FilterManager fm;
+    fm.applyFilters(audioSource);
+    
+    // Verify: Speex applied, RNNoise not applied
+    EXPECT_TRUE(sourceHasFilter(audioSource, "Speex"));
+    EXPECT_FALSE(sourceHasFilter(audioSource, "RNNoise"));
+}
+```
 
 * Include source creation, filter application, encoder init, edge cases
 
 ---
 
 ## 3. Memory Tests
+
+**What to Check:**
+- All `obs_source_create()` matched with `obs_source_release()`
+- All `obs_scene_create()` matched with `obs_scene_release()`
+- No leaks after plugin unload
+- No leaks after wizard cancel/error paths
+- RAII wrappers release correctly
 
 **Tools:** Valgrind (Linux), Dr. Memory (Windows)
 
@@ -145,6 +185,24 @@ valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --log-file=
 * All settings applied correctly
 * Performance metrics within expected thresholds
 
+### macOS Specific
+
+**Required Hardware:**
+- Intel Mac with T2 chip (2018+)
+- Apple Silicon Mac (M1/M2/M3)
+
+**VideoToolbox Tests:**
+```cpp
+TEST(SystemDetector, DetectEncoders_AppleSilicon_ReturnsVideoToolboxFirst) {
+    SystemDetector detector;
+    auto encoders = detector.detectEncoders();
+    
+    ASSERT_GE(encoders.size(), 1);
+    EXPECT_EQ(encoders[0].id, "com.apple.videotoolbox.videoencoder.h264");
+    EXPECT_GT(encoders[0].priority, 90); // Higher than x264
+}
+```
+
 ---
 
 ## 5. UI Testing
@@ -167,15 +225,55 @@ QCOMPARE(wizard.getSelectedPlatform(), "Twitch");
 
 **Techniques:**
 
-* Thread Sanitizer (TSan) for race detection
+**Debug Assertions:** Verify main thread in OBS API calls
+```cpp
+void ProfileManager::createProfile() {
+    assert(QThread::currentThread() == qApp->thread());
+    // ... OBS API calls
+}
+```
+
+**Thread Sanitizer (TSan):** Detect race conditions
+```bash
+cmake -DCMAKE_CXX_FLAGS="-fsanitize=thread" ..
+./run_tests  # TSan will report data races
+```
 * Manual simulation of concurrent network/UI operations
 * Stress testing worker threads
 
 **CI:** Run TSan on Linux CI; flag all races
+**Recording Test Thread Safety:**
+- Recording test MUST use Qt timers, not blocking sleep
+- Test for UI responsiveness during 30-second test
+- Verify progress updates every second
+- Ensure cancel button works during test
 
 ---
 
-## 7. Test Organization & Commands
+## 7. Network Module Tests
+
+**Timeout Tests:**
+```cpp
+TEST(NetworkTester, SpeedTest_Timeout_ReturnsSafeDefault) {
+    // Mock server that delays response
+    MockSlowServer server;
+    NetworkTester tester("http://localhost:8080");
+    
+    auto speed = tester.runSpeedTest();
+    
+    EXPECT_EQ(speed, 3500.0); // Safe default
+    EXPECT_LT(tester.elapsedTime(), 35); // Timed out within limit
+}
+
+TEST(NetworkTester, SpeedTest_FirewallBlock_ReturnsSafeDefault) {
+    // Mock firewall rejection
+    NetworkTester tester("http://blocked.example.com");
+    auto speed = tester.runSpeedTest();
+    EXPECT_EQ(speed, 3500.0);
+}
+```
+
+## 8. Test Organization & Commands
 
 **Directory Structure:**
 
@@ -206,7 +304,7 @@ test:
 
 ---
 
-## 5. CI/CD Integration Plan
+## 9. CI/CD Integration Plan
 
 * **Unit Tests:** Run on every pull request; must pass before merge
 * **Integration Tests:** Run on nightly builds or pre-release testing
@@ -215,6 +313,3 @@ test:
 * **System Tests:** Marked for manual execution on physical or VM environments; automated where feasible (Windows VMs, Linux containers)
 * **Format/Conventions Check:** `clang-format` v15 applied in CI
 * **Fail Conditions:** Unit test failures, coverage <80%, or critical memory leaks block merge
-
-**Conclusion:**
-Provides actionable detail for inexperienced developers to implement, run, and maintain unit, integration, memory, system, and UI tests. Ensures OBS API safety, memory correctness, thread safety, and cross-platform reliability.

@@ -106,7 +106,7 @@
 4. Just Chatting Scene Placeholder Sources
    * Uses same overlay as "Gameplay w/o camera"
    * replaces Game capture placeholder with camera feed or placeholder
-5. Overlays → [Show dialog]: "Do you have custom overlays?"
+<s>5. Overlays → [Show dialog]: "Do you have custom overlays?"
    - Yes → Proceed to individual selection
    - No → Use bundled defaults
    * IF Yes: For each scene type:
@@ -115,6 +115,8 @@
       * [User selects file OR clicks Skip]
       * [Preview shown if file selected]
       * [Repeat for: BRB, Ending Soon, Gameplay overlays, etc.]
+</s>
+*Note: Skip #5 for now. Decided that allowing for custom overlay picking overcomplicates the MVP and simplicity of setup for a new user. Perhaps we should add a tutorial for changing overlays later.*
 6. [Set source order/Z-order in scenes]:
       1. Game Capture (bottom layer)
       2. Webcam (top layer, positioned in corner)
