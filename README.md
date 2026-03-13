@@ -1,7 +1,7 @@
 # obs-setup
 
 ## Name
-OBS One-Click Setup for Streamers
+OBS Quickstart Setup for Streamers
 
 ## Description
 IN DEVELOPMENT - not currently ready for use. We are building an OBS plugin that will programmatically handle 70%-80% of the necessary/best-practice setup of OBS for 80%-90% of users. There are certain setup actions that simply can't be accomplished by a plugin and there are certain edge cases (multiple GPUs, exotic Linux setups, users with 3+ webcams) that will not be covered, but this will remove a huge amount of the friction with being a new streamer/OBS user for the vast majority of users.
