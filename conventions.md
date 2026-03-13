@@ -175,19 +175,23 @@ assert(QThread::currentThread() == qApp->thread());
 
 1. Corresponding header
 2. Blank line
-3. C headers `<stdio.h>`
-4. C++ standard library `<vector>`
-5. Third-party `<obs.h>`, `<QDialog>`
+3. **C++ standard library** (`<string>`, `<vector>`, `<memory>`)
+4. **Qt headers** (`<QDialog>`, `<QWidget>`)
+5. **OBS headers** (`<obs.h>`, `<obs-frontend-api.h>`)
 6. Blank line
-7. Project headers `"profile_manager.h"`
+7. Project headers (`"profile_manager.h"`)
 
 **Use quotes for project headers, angle brackets for system/third-party.**
 
+**Example:**
 ```cpp
 #include "system_detector.h"
 
 #include <string>
 #include <vector>
+
+#include <QDialog>
+#include <QMessageBox>
 
 #include <obs.h>
 #include <obs-frontend-api.h>
@@ -195,5 +199,9 @@ assert(QThread::currentThread() == qApp->thread());
 #include "common/logger.h"
 #include "common/obs_wrappers.h"
 ```
+
+**Note:** OBS headers are C-compatible and work in C++ without modification.
+
+**Use quotes for project headers, angle brackets for system/third-party.**
 
 ---

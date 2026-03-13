@@ -14,8 +14,8 @@ This document outlines the architecture of the OBS Setup Plugin, designed to aut
   /filters        # Conditional audio filter application
   /monitoring     # Local recording test & metrics
   /ui             # Setup dialog and user interaction
-  plugin-main.c
-  plugin-support.c
+  plugin-main.cpp
+  plugin-support.cpp
   plugin-support.h
   /data
     /locale
