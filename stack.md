@@ -1,4 +1,27 @@
-Language: C++17
+
+## Language & Standards
+
+**Language:** C++17
+
+**Why C++ over C:**
+- Qt framework requires C++ (for UI wizard)
+- RAII for safer OBS object management
+- STL containers (std::vector, std::string) for convenience
+- Class-based architecture for modularity
+
+**OBS Compatibility:**
+- OBS Studio core is C
+- Plugins can be C or C++
+- Entry points must use `extern "C"` linkage
+- All OBS API calls are C-compatible
+
+**Template Conversion:**
+obs-plugintemplate uses .c files by default (minimal example).
+We convert to .cpp and add:
+- `extern "C"` wrapper for entry points
+- C++17 standard in CMake
+- Qt integration
+
 Build System: CMake 3.16+
 Plugin Type: Native OBS plugin (not script)
 
