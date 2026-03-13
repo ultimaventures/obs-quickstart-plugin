@@ -1,62 +1,22 @@
 # obs-setup
 
-
-
-## Getting started
-
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://gitlab.com/ultimaventures-playground/obs-setup.git
-git branch -M main
-git push -uf origin main
-```
-
-## Integrate with your tools
-
-* [Set up project integrations](https://gitlab.com/ultimaventures-playground/obs-setup/-/settings/integrations)
-
-## Collaborate with your team
-
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
-
-## Test and Deploy
-
-Use the built-in continuous integration in GitLab.
-
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
 ## Name
-Choose a self-explaining name for your project.
+OBS One-Click Setup for Streamers
 
 ## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+IN DEVELOPMENT - not currently ready for use. We are building an OBS plugin that will programmatically handle 70%-80% of the necessary/best-practice setup of OBS for 80%-90% of users. There are certain setup actions that simply can't be accomplished by a plugin and there are certain edge cases (multiple GPUs, exotic Linux setups, users with 3+ webcams) that will not be covered, but this will remove a huge amount of the friction with being a new streamer/OBS user for the vast majority of users.
+
+Here's what you'll most likely still want to do even after running this, as these cannot be fully automated via plugin:
+* Connect Twitch account via OAuth
+* Connect YouTube account via OAuth
+* Retrieve or manually paste platform stream keys (Twitch/YouTube/TikTok)
+* Configure third-party chat docks (Restream Chat)
+* Certain third-party plugin configurations - we recommend:
+    * Enable Replay Buffer
+    * Enable Source Record Plugin (record individual sources separately)
+    * Enable Move Transition plugin for smooth animations
+* Full service-specific multi-output configuration (we recommend Restream over OBS Multiple RTMP plugin for beginners)
+* OAuth-based alert account linking for Streamlabs / StreamElements
 
 ## Badges
 On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
@@ -74,7 +34,175 @@ Use examples liberally, and show the expected output if you can. It's helpful to
 Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
 
 ## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+### 1) **Set Up Project Skeleton**
+In addition to directory structures from [OBS Plugin Template](https://github.com/obsproject/obs-plugintemplate)
+```
+/obs-setup
+  /src
+    /detection (empty for now)
+    /network
+    /profile
+    /settings
+    /sources
+    /filters
+    /monitoring
+    /ui
+  /tests
+    /unit
+    /integration
+  CMakeLists.txt
+  README.md
+  architecture.md ✅
+  CONVENTIONS.md (TODO)
+  TESTING.md (TODO)
+```
+### 2) Proof of Concept Task
+Before Sprint 1 starts, someone must:
+
+* Clone obs-plugintemplate
+* Build a basic C++ plugin that loads in OBS
+* Add menu item "Tools > OBS Setup Test"
+* Show a Qt dialog saying "Hello World"
+* Log "Plugin loaded" to OBS log
+* Detect one encoder and log it
+
+Success criteria: Plugin compiles, loads without crashing OBS, shows dialog.
+
+### 3. Consolidated Subtasks/Sprints
+
+#### Pre-sprint setup
+- Update CMakeLists.txt:
+  - Change project name to obs-setup
+  - Add subdirectories
+  - Set version, author, etc.
+- GitHub Actions → GitLab CI/CD Translation
+  - obs-plugintemplate includes:
+    ```
+    .github/workflows/build.yml
+    .github/workflows/release.yml
+    ```
+  - We'll create:
+    ```
+    .gitlab-ci.yml
+    ```
+- Test local build:
+  ```
+  bash   cmake -B build
+  cmake --build build
+  ```
+  Should compile and load in OBS (even if it does nothing yet)
+
+#### Sprint 1: Foundation / System Detection (Week 3-4)
+**Module: SystemDetector**
+- Detect available encoders (NVENC, AMF, QSV, x264)
+- Determine encoder priority and handle missing encoders
+- Detect first available webcam (device ID)
+- Collect CPU & GPU info
+- Tests:
+  - Mock different hardware configurations
+  - Verify encoder priority: NVENC > AMF > QSV > x264
+  - Handle missing encoders gracefully
+
+**Module: SpeedTestWrapper**
+- Optional speed test for upload bandwidth
+- Handles network errors gracefully
+- Returns estimated speed in Mbps
+- Test: Returns plausible speed, fallback if network blocked
+
+**Module: ProfileManager**
+- Create new profile (e.g., "AutoSetup_Beginner_[Platform]") without modifying existing profiles
+- Create new scene collection (e.g., "Beginner_Stream_Setup")
+- Switch to new profile
+- Apply calculated settings to profile
+- Test: Profile and collection created successfully, original untouched
+
+---
+
+#### When to add CI/CD:
+- After Sprint 1 completes (basic modules working locally)
+- Before merging to main branch
+- When we need automated testing
+
+**Where to document it:**
+- Create CI-CD.md or DEPLOYMENT.md separate from architecture
+- Don't clutter architecture docs with build pipeline details
+
+#### Sprint 2: Core Logic / Settings Engine (Week 5-6)
+**Module: SettingsCalculator**
+- Calculate optimal resolution, FPS, bitrate based on:
+  - Upload speed
+  - Encoder type
+  - CPU cores
+- Tests:
+  - Given 7000 kbps → outputs 720p60 @ 4500 kbps
+  - No hardware encoder → uses x264 ultrafast
+  - CPU-limited systems → lower settings
+
+**Module: PerformanceMonitor**
+- Record local test for 30 seconds
+- Monitor CPU usage, GPU load, dropped frames, rendered frames
+- Determine system stability
+- Retry logic: max 3 attempts
+- Fallback: minimum config if unstable after retries
+  - 720p30 @ 2500 kbps, x264 ultrafast
+- Tests:
+  - Returns correct metrics
+  - Determines stability according to thresholds
+
+---
+
+#### Sprint 3: Scene Creation (Week 11-12)
+**Module: SceneBuilder**
+- Create scene structure: Starting Soon, Live, BRB, Ending
+- Add placeholder sources:
+  - Game Capture (mode: fullscreen app; may require user config)
+  - Webcam (first detected device)
+  - Placeholder text overlays (e.g., "Configure game capture", "Stream title")
+- Tests:
+  - Scene structure created
+  - Placeholder sources added correctly
+
+---
+
+#### Sprint 4: Audio Filters (Week 13-14)
+**Module: AudioFilterManager**
+- Apply conditional audio filters based on CPU headroom:
+  - CPU usage during recording test < 60% → RNNoise + Compressor + Limiter
+  - CPU usage ≥ 60% → Speex + Noise Gate only
+- Methods:
+  - `addRNNoise()`, `addSpeex()`, `addCompressor()`, `addLimiter()`
+- Tests:
+  - Filters applied according to CPU thresholds
+
+---
+
+#### Sprint 5: UI / Setup Wizard (Week 15-16)
+**Module: SetupWizard (Qt)**
+- Collect user inputs:
+  - Content type (Gaming/IRL/Just Chatting)
+  - Platform(s) (Twitch/YouTube/Both/Other)
+  - Stream key presence
+  - Upload speed (optional, can use speed test)
+- Show summary of calculated settings
+- Display reminders / next steps:
+  - Configure game capture
+  - Add stream key if not present
+- Tests:
+  - Correct user input captured
+  - Summary displayed correctly
+
+---
+
+#### Sprint 6: Integration & Final Validation
+- Integrate all modules:
+  - System detection → Settings calculation → Profile creation → Scene & sources → Audio filters → UI wizard
+- Run end-to-end test with:
+  - Multiple hardware configurations
+  - Different CPU/GPU loads
+  - Optional network speed input
+- Validate fallback behavior
+- Validate max retries and minimum config fallback
+
 
 ## Contributing
 State if you are open to contributions and what your requirements are for accepting them.
