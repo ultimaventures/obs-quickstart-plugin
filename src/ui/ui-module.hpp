@@ -4,8 +4,10 @@
 namespace obs_setup {
 namespace ui {
 
-// TODO: Implement ui module
-// Placeholder for Sprint 1
+/**
+ * @brief Shows a simple Qt MessageBox saying "Hello World".
+ */
+void show_hello_world_dialog();
 
 } // namespace ui
 } // namespace obs_setup

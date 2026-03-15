@@ -1,1 +1,22 @@
-# GitLab CI configuration removed. Transitioning to GitHub Actions.
+# GitLab CI configuration for the OBS Quickstart Plugin
+# ======================================================
+# NOTE: Main builds and releases are handled via GitHub Actions (.github/workflows).
+# This GitLab CI file is primarily for quality checks on the GitLab mirror.
+# ======================================================
+
+stages:
+  - check
+
+variables:
+  BUILD_DIR: build
+
+# Quality check stage mirroring the original GitHub workflow
+check:
+  stage: check
+  image: ubuntu:24.04
+  before_script:
+    - apt-get update && apt-get install -y clang-format-19
+  script:
+    - echo "Checking C++ file formatting..."
+    # Ensure we're using the correct version of clang-format as per conventions.md
+    - find src -iname '*.cpp' -o -iname '*.hpp' | xargs clang-format-19 --dry-run -Werror

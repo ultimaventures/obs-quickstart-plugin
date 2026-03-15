@@ -15,7 +15,7 @@
 
 ## Phase 1: Quick Setup Dialog
 
-1. [Ask user content type] → Gaming / IRL / Just Chatting
+<!-- 1. [Ask user content type] → Gaming / IRL / Just Chatting --> Not sure how this will change any of the settings, going to skip this question.
 2. [Ask user platform] → Twitch / YouTube / Other
 3. [Check stream key configured]
 

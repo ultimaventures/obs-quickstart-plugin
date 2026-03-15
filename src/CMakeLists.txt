@@ -8,17 +8,24 @@ add_subdirectory(filters)
 add_subdirectory(monitoring)
 add_subdirectory(ui)
 
+# plugin-support.cpp is generated from plugin-support.cpp.in by CMake (via helpers_common.cmake)
+# We include it in the main library target
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     plugin-main.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/plugin-support.cpp"
 )
 
 # Link dependencies (assuming nlohmann/json and cpp-httplib will be added as needed)
+# We remove the static library link for plugin-support and just use the source directly.
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
-    plugin-support
+    OBS::libobs
 )
 
-# Placeholder for future dependency configuration:
-# find_package(nlohmann_json REQUIRED)
-# target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
-# find_package(cpp-httplib REQUIRED)
-# target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE httplib::httplib)
+# Ensure Qt and other necessary flags are included
+if(ENABLE_QT)
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
+endif()
+
+if(ENABLE_FRONTEND_API)
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::obs-frontend-api)
+endif()

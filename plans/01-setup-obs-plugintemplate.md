@@ -31,6 +31,7 @@ Initialize the project codebase by adopting the `obs-plugintemplate`, converting
 ### 4. CI/CD Migration
 - **Action:** Remove `.github/` directory.
 - **Action:** Create `.gitlab-ci.yml` with stages for `build`, `test`, and `package`.
+- **Note (2026-03-15):** Mid-build change - We decided to host the repository in GitLab but use GitHub Actions for building releases and CI. The `.github/` directory will be restored/maintained, and `.gitlab-ci.yml` will be kept as a minimal placeholder or for basic checks.
 
 ### 5. Documentation Updates
 - **Action:** Update `STACK.md` with C++17 justification.
