@@ -1,9 +1,8 @@
-# MacOS
+# OS generated files
 .DS_Store
 .AppleDouble
 .LSOverride
 Icon
-
 
 # Gemini
 .gemini/
@@ -13,6 +12,10 @@ Icon
 build/
 bin/
 out/
+Release/
+Debug/
+RelWithDebInfo/
+rundir/
 
 # IDEs
 .vscode/
@@ -27,3 +30,14 @@ CMakeSettings.json
 cmake_install.cmake
 install_manifest.txt
 Makefile
+*.cmake
+!CMakeLists.txt
+!cmake/
+
+# Caches
+.ccache/
+*.pyc
+
+# OBS Specific
+/cmake/.CMakeBuildNumber
+buildspec.json.user
