@@ -65,8 +65,7 @@ jobs:
           mkdir -p obs-deps
           if [ "${{ runner.os }}" == "macOS" ]; then
             curl -L -o obs-studio.dmg https://github.com/obsproject/obs-studio/releases/download/31.1.1/OBS-Studio-31.1.1-macOS-Intel.dmg
-            # For simplicity, many CI setups use source or specific SDK zips. 
-            # Mounting a DMG in CI is more involved.
+            # Simplified for now.
           else
             curl -L -o OBS-31.1.1-Windows.zip https://github.com/obsproject/obs-studio/releases/download/31.1.1/OBS-Studio-31.1.1-Windows-x64.zip
             unzip -q OBS-31.1.1-Windows.zip -d obs-deps
