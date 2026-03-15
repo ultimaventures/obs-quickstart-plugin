@@ -1,7 +1,7 @@
 # Plan: Initialize and Adapt OBS Plugin Template
 
 ## Objective
-Initialize the project codebase by adopting the `obs-plugintemplate`, converting it to C++17, and refactoring it to match the modular architecture defined in `obs-setup/architecture.md`.
+Initialize the project codebase by adopting the `obs-plugintemplate`, converting it to C++17, and refactoring it to match the modular architecture defined in `obs-quickstart-plugin/architecture.md`.
 
 ## Prerequisites
 - `obs-quickstart-plugin/` documentation (Reviewed)

@@ -4,11 +4,15 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCO
 
 project(${_name} VERSION ${_version} LANGUAGES C CXX)
 
+if(OBS_SDK_DIR)
+  list(APPEND CMAKE_PREFIX_PATH "${OBS_SDK_DIR}")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" OFF)
-option(ENABLE_QT "Use Qt functionality" OFF)
+option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" ON)
+option(ENABLE_QT "Use Qt functionality" ON)
 
 include(compilerconfig)
 include(defaults)

@@ -40,6 +40,6 @@
     "displayName": "OBS Quickstart Plugin",
     "version": "0.1.0",
     "author": "Dan Schultz & Quentin Oliver",
-    "website": "https://gitlab.com/ultimaventures-playground/obs-setup/",
+    "website": "https://gitlab.com/ultimaventures-playground/obs-quickstart-plugin/",
     "email": "ultimaventures@gmail.com"
 }

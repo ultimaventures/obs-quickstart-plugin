@@ -4,9 +4,10 @@
 .LSOverride
 Icon
 
-# Gemini
+# Gemini/LLM Resources
 .gemini/
 .geminiignore
+digest.txt
 
 # Build directories
 build/

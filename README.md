@@ -1,4 +1,4 @@
-# obs-setup
+# obs-quickstart-plugin
 
 ## Name
 OBS Quickstart Setup for Streamers
@@ -37,7 +37,7 @@ Tell people where they can go to for help. It can be any combination of an issue
 ### 1) **Set Up Project Skeleton**
 In addition to directory structures from [OBS Plugin Template](https://github.com/obsproject/obs-plugintemplate)
 ```
-/obs-setup
+/obs-quickstart-plugin
   /src
     /detection (empty for now)
     /network
@@ -72,7 +72,7 @@ Success criteria: Plugin compiles, loads without crashing OBS, shows dialog.
 
 #### Pre-sprint setup
 - Update CMakeLists.txt:
-  - Change project name to obs-setup
+  - Change project name to obs-quickstart-plugin
   - Add subdirectories
   - Set version, author, etc.
 - GitHub Actions → GitLab CI/CD Translation
