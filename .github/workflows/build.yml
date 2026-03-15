@@ -64,11 +64,9 @@ jobs:
         run: |
           mkdir -p obs-deps
           if [ "${{ runner.os }}" == "macOS" ]; then
-            # Note: For macOS, the official release is a .dmg. 
-            # Often plugins build against the library in the DMG or use a pre-compiled zip if available.
-            # Here we attempt to download the Intel/Apple common files if possible, or fallback to DMG mounting.
             curl -L -o obs-studio.dmg https://github.com/obsproject/obs-studio/releases/download/31.1.1/OBS-Studio-31.1.1-macOS-Intel.dmg
-            # Simplified for now: in many CI setups, developers use a custom-zipped SDK or build from source.
+            # For simplicity, many CI setups use source or specific SDK zips. 
+            # Mounting a DMG in CI is more involved.
           else
             curl -L -o OBS-31.1.1-Windows.zip https://github.com/obsproject/obs-studio/releases/download/31.1.1/OBS-Studio-31.1.1-Windows-x64.zip
             unzip -q OBS-31.1.1-Windows.zip -d obs-deps
@@ -76,11 +74,12 @@ jobs:
 
       # --- CMake build ---
       - name: Configure CMake
+        shell: bash
         run: |
           cmake --preset ${{ matrix.preset }} \
             -B build \
             -DCMAKE_BUILD_TYPE=Release \
-            ${{ matrix.os != 'ubuntu-24.04' && '-DOBS_SDK_DIR=${{ github.workspace }}/obs-deps' || '' }}
+            ${{ matrix.os != 'ubuntu-24.04' && format('-DOBS_SDK_DIR="{0}/obs-deps"', github.workspace) || '' }}
 
       - name: Build
         run: cmake --build build --config Release --parallel
