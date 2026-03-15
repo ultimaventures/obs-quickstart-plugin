@@ -104,6 +104,9 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
+    env:
+      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+      GITLAB_PROJECT_ID: ${{ secrets.GITLAB_PROJECT_ID }}
 
     steps:
       - name: Download artifacts
@@ -120,10 +123,8 @@ jobs:
             artifacts/plugin-macos/plugin-macos.zip
 
       - name: Upload to GitLab
-        if: secrets.GITLAB_TOKEN != '' && secrets.GITLAB_PROJECT_ID != ''
+        if: env.GITLAB_TOKEN != '' && env.GITLAB_PROJECT_ID != ''
         env:
-          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
-          GITLAB_PROJECT_ID: ${{ secrets.GITLAB_PROJECT_ID }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
           echo "Uploading plugin artifacts to GitLab release $TAG_NAME"
