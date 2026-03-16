@@ -16,7 +16,7 @@ std::vector<DetectedEncoder> detect_available_encoders() {
       DetectedEncoder encoder;
       encoder.id = id;
       encoder.name = obs_encoder_get_display_name(id);
-      encoder.type = obs_encoder_get_codec(id);
+      encoder.type = obs_get_encoder_codec(id);
       encoders.push_back(encoder);
     }
   }
