@@ -33,7 +33,7 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "org.obsproject.obs-quickstart-plugin"
+            "bundleId": "com.obs-quickstart.plugin"
         }
     },
     "name": "obs-quickstart-plugin",
