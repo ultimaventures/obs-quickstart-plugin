@@ -12,7 +12,6 @@ add_subdirectory(ui)
 # We include it in the main library target
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     plugin-main.cpp
-   # "${CMAKE_CURRENT_BINARY_DIR}/plugin-support.cpp"
 )
 
 # Link dependencies (assuming nlohmann/json and cpp-httplib will be added as needed)
