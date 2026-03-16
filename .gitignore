@@ -8,6 +8,7 @@ Icon
 .gemini/
 .geminiignore
 digest.txt
+edited-files-ingest.txt
 
 # Build directories
 build/
@@ -17,6 +18,7 @@ Release/
 Debug/
 RelWithDebInfo/
 rundir/
+obs-deps/
 
 # IDEs
 .vscode/
@@ -24,20 +26,13 @@ rundir/
 *.swp
 *.swo
 
-# CMake
+# CMake generated files
 CMakeCache.txt
 CMakeFiles/
 CMakeSettings.json
 cmake_install.cmake
 install_manifest.txt
 Makefile
-*.cmake
-!CMakeLists.txt
-!cmake/
-
-# Caches
-.ccache/
-*.pyc
 
 # OBS Specific
 /cmake/.CMakeBuildNumber
