@@ -7,16 +7,21 @@ namespace detection {
 
 std::vector<DetectedEncoder> detect_available_encoders() {
   std::vector<DetectedEncoder> encoders;
-  const char *id;
+  const char *id = nullptr;
   size_t idx = 0;
 
   // Iterate through all video encoders registered in OBS
   while (obs_enum_encoder_types(idx++, &id)) {
-    if (obs_get_encoder_type(id) == OBS_ENCODER_VIDEO) {
+    if (id && obs_get_encoder_type(id) == OBS_ENCODER_VIDEO) {
       DetectedEncoder encoder;
       encoder.id = id;
-      encoder.name = obs_encoder_get_display_name(id);
-      encoder.type = obs_get_encoder_codec(id);
+
+      const char *display_name = obs_encoder_get_display_name(id);
+      encoder.name = display_name ? display_name : "";
+
+      const char *codec = obs_get_encoder_codec(id);
+      encoder.type = codec ? codec : "";
+
       encoders.push_back(encoder);
     }
   }
