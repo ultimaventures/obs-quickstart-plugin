@@ -14,7 +14,7 @@ endif()
 if(CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION VERSION_LESS 10.0.17763)
   message(
     FATAL_ERROR
-    "OBS requires Windows 10 SDK version 10.0.17763.0 or more recent.\n"
+    "This plugin requires Windows 10 SDK version 10.0.17763 or more recent.\n"
     "Please download and install the most recent Windows platform SDK."
   )
 endif()

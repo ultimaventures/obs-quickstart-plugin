@@ -58,10 +58,7 @@
       },
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
-      "warnings": {"dev": true, "deprecated": true},
-      "cacheVariables": {
-        "CMAKE_SYSTEM_VERSION": "10.0.17763.0"
-      }
+      "warnings": {"dev": true, "deprecated": true}
     },
     {
       "name": "windows-ci-x64",
