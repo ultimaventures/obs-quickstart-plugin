@@ -20,11 +20,11 @@ include(helpers)
 
 add_library(${CMAKE_PROJECT_NAME} MODULE)
 
-find_package(libobs 29.1.0 REQUIRED)
+find_package(libobs 30.2.1 REQUIRED)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs)
 
 if(ENABLE_FRONTEND_API)
-  find_package(obs-frontend-api 29.1.0 REQUIRED)
+  find_package(obs-frontend-api 30.2.1 REQUIRED)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::obs-frontend-api)
 endif()
 
