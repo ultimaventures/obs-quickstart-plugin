@@ -66,10 +66,10 @@ struct HardwareInfo {
 3. QSV (Intel 7th gen+)
 4. x264 (software fallback)
 
-**macOS:**
+**macOS (11+):**
 1. VideoToolbox (Apple Silicon M1/M2/M3 - native hardware)
 2. VideoToolbox (Intel Mac with T2 chip)
-3. x264 (software fallback for older Macs)
+3. x264 (software fallback for older Intel Macs)
 
 **Linux:**
 1. VAAPI (Intel/AMD)
@@ -82,7 +82,7 @@ std::vector SystemDetector::detectEncoders() {
     std::vector encoders;
     
 #ifdef __APPLE__
-    // macOS - check VideoToolbox first
+    // macOS 11+ - check VideoToolbox first
     if (isVideoToolboxAvailable()) {
         encoders.push_back({
             "com.apple.videotoolbox.videoencoder.h264",
@@ -118,11 +118,11 @@ std::vector SystemDetector::detectEncoders() {
 }
 ```
 
-**Apple Silicon Considerations:**
-- VideoToolbox on M1/M2/M3 is FASTER and higher quality than x264
-- Must be default choice on Apple Silicon
-- Different quality presets than NVENC/AMF
-- Test on actual Mac hardware (not just CI)
+**Apple Silicon & macOS 11 Considerations:**
+- VideoToolbox on macOS 11+ is the primary hardware encoder
+- Native support for both Intel and M-series chips (Universal Binary)
+- Targets Big Sur (11.0) floor for maximum ecosystem coverage
+- Test on actual Intel/Apple Silicon hardware for compatibility verification
 
 **API Surface:**
 
