@@ -188,12 +188,12 @@ valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --log-file=
 ### macOS Specific
 
 **Required Hardware:**
-- Intel Mac with T2 chip (2018+)
+- Intel Mac (supports Big Sur 11.0+)
 - Apple Silicon Mac (M1/M2/M3)
 
 **VideoToolbox Tests:**
 ```cpp
-TEST(SystemDetector, DetectEncoders_AppleSilicon_ReturnsVideoToolboxFirst) {
+TEST(SystemDetector, DetectEncoders_macOS11Plus_ReturnsVideoToolboxFirst) {
     SystemDetector detector;
     auto encoders = detector.detectEncoders();
     
