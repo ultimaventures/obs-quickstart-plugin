@@ -9,7 +9,7 @@
             }
         },
         "prebuilt": {
-            "version": "2023-04-14", 
+            "version": "2023-04-12", 
             "baseUrl": "https://github.com/obsproject/obs-deps/releases/download",
             "label": "Pre-Built obs-deps",
             "hashes": {
@@ -18,7 +18,7 @@
             }
         },
         "qt6": {
-            "version": "2023-04-14",
+            "version": "2023-04-12",
             "baseUrl": "https://github.com/obsproject/obs-deps/releases/download",
             "label": "Pre-Built Qt6",
             "hashes": {
