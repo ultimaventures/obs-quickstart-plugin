@@ -3,9 +3,8 @@
         "obs-studio": {
             "version": "29.1.0",
             "baseUrl": "https://github.com/obsproject/obs-studio/archive/refs/tags",
-            "label": "OBS sources",
             "hashes": {
-                "macos": "f6cf84a196636c949add633f37702e3b1c93d7229bda075dd3c3793205f428eb",
+                "macos": "58e1c66f50b44b25697d84813083049102432a5270c53835062a4d34f0d368e7",
                 "windows-x64": "274cf5689238f4ba90b036a5b943c10019f27ceeb77699f361b52b992dc18f79"
             }
         },
