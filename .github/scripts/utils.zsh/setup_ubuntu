@@ -34,8 +34,8 @@ if (( ! (${skips[(Ie)all]} + ${skips[(Ie)deps]}) )) {
 
     sudo apt-get install ${apt_args} gcc-${${target##*-}//_/-}-linux-gnu g++-${${target##*-}//_/-}-linux-gnu
   }
-
-  sudo add-apt-repository --yes ppa:obsproject/obs-studio
+# the OBS ppa uses too high of a libobs version, should default to an older version by removing this
+  # sudo add-apt-repository --yes ppa:obsproject/obs-studio
   sudo apt update
 
   sudo apt-get install ${apt_args} \
