@@ -5,8 +5,8 @@
             "baseUrl": "https://github.com/obsproject/obs-studio/archive/refs/tags",
             "label": "OBS sources",
             "hashes": {
-                "macos": "f6cf84a196636c949add633f37702e3b1c93d7229bda075dd3c3793205f428eb",
-                "windows-x64": "274cf5689238f4ba90b036a5b943c10019f27ceeb77699f361b52b992dc18f79"
+                "macos": "a75c816304c2cc57cf5124859a7ee9fae6397ce1d925f906e911fe954e26eafa",
+                "windows-x64": "6473987eafca3097345f67cdf286a147a3e29c3d251cd8a005d4c9a1a7fb48f9"
             }
         },
         "prebuilt": {
