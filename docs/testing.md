@@ -311,5 +311,5 @@ test:
 * **Memory Tests:** Linux CI uses Valgrind/ASAN; Windows optionally with Dr. Memory
 * **Coverage Enforcement:** Core modules must have >80% coverage, reported in CI
 * **System Tests:** Marked for manual execution on physical or VM environments; automated where feasible (Windows VMs, Linux containers)
-* **Format/Conventions Check:** `clang-format` v16 applied in CI
+* **Format/Conventions Check:** `clang-format` 19.1.1 applied in CI
 * **Fail Conditions:** Unit test failures, coverage <80%, or critical memory leaks block merge

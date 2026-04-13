@@ -1,29 +1,26 @@
-# MacOS
+# Exclude everything
+/*
+
+# Except for default project files
+!/.github
+!/build-aux
+!/cmake
+!/data
+!/src
+!.clang-format
+!.gersemirc
+!.gitignore
+!buildspec.json
+!CMakeLists.txt
+!CMakePresets.json
+!LICENSE
+!README.md
+
+# Exclude lock files
+*.lock.json
+
+# Exclude macOS legacy resource forks
 .DS_Store
-.AppleDouble
-.LSOverride
-Icon
 
-
-# Gemini
-.gemini/
-.geminiignore
-
-# Build directories
-build/
-bin/
-out/
-
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# CMake
-CMakeCache.txt
-CMakeFiles/
-CMakeSettings.json
-cmake_install.cmake
-install_manifest.txt
-Makefile
+# Exclude CMake build number cache
+/cmake/.CMakeBuildNumber

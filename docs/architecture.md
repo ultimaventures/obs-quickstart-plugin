@@ -496,7 +496,7 @@ signals:
 
 ## Plugin Configuration
 
-**Storage:** $OBS_CONFIG/plugin_config/obs-setup/config.json
+**Storage:** $OBS_CONFIG/plugin_config/obs-quickstart-plugin/config.json
 **Format:** JSON
 
 **Stores:** Last used settings, user preferences, plugin version
