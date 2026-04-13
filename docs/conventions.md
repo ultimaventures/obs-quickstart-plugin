@@ -63,8 +63,8 @@ std::vector<EncoderInfo> detectEncoders();
 
 ## 6. Code Formatting (clang-format)
 
-* Use clang-format **version 16 exactly**
-* Pin in CI: `apt-get install clang-format-16`
+* Use clang-format **version 19.1.1 exactly**
+* Pin in CI: `apt-get install clang-format-19.1.1`
 * Matches OBS Studio and obs-plugintemplate standards
 * Example `.clang-format` snippet:
 
