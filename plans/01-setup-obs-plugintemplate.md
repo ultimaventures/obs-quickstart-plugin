@@ -18,7 +18,7 @@ Initialize the project codebase by adopting the `obs-plugintemplate`, converting
 - **Action:** Rename `src/plugin-main.c` to `src/plugin-main.cpp`.
 - **Action:** Wrap OBS entry points in `extern "C"` in `src/plugin-main.cpp`.
 - **Action:** Create module subdirectories in `src/`:
-  - `src/detection/`, `src/network/`, `src/profile/`, `src/settings/`, `src/sources/`, `src/filters/`, `src/monitoring/`, `src/ui/`
+  - `src/detection/`, `src/profile/`, `src/settings/`, `src/sources/`, `src/filters/`, `src/monitoring/`, `src/ui/` *(the `/network` speed-test module was removed from scope 2026-09-28 and its directory deleted 2026-09-29 — see ADR-002)*
 - **Action:** Create placeholder headers/sources for each module.
 
 ### 3. Update CMake Configuration
@@ -26,7 +26,7 @@ Initialize the project codebase by adopting the `obs-plugintemplate`, converting
   - Set project name to `obs-quickstart-plugin`.
   - Set `LANGUAGES CXX`, `CMAKE_CXX_STANDARD 17`, and `CMAKE_CXX_STANDARD_REQUIRED ON`.
 - **Action:** Update `src/CMakeLists.txt` to include new subdirectories and `src/plugin-main.cpp`.
-- **Action:** Configure dependencies (`libobs`, `Qt6`, `nlohmann/json`, `cpp-httplib`).
+- **Action:** Configure dependencies (`libobs`, `Qt6`, `nlohmann/json`).
 
 ### 4. CI/CD Migration
 - **Action:** Remove `.github/` directory.
@@ -50,7 +50,7 @@ Initialize the project codebase by adopting the `obs-plugintemplate`, converting
 
 The following scope decisions were made after this plan was completed, based on research into OBS's built-in Auto-Configuration Wizard (verified against OBS Studio 31.0.0 source). They are recorded here for planning continuity; the normative detail lives in `docs/architecture.md`, `docs/flowchart.md`, `docs/functionality.md`, and `README.md`.
 
-**Deferred to OBS's Auto-Configuration Wizard (struck through in docs, not deleted):**
+**Deferred to OBS's Auto-Configuration Wizard (recorded in the `docs/decisions.md` ADR log):**
 - Base/output resolution and FPS selection
 - Encoder selection (NVENC/AMF/QSV/VideoToolbox/x264)
 - Upload-speed-driven bitrate calculation and the `/network` speed-test module
@@ -58,10 +58,10 @@ The following scope decisions were made after this plan was completed, based on 
 
 **New plugin flow:** setup creates a `Quickstart` profile (deduplicated), switches to it, and triggers the wizard on it — programmatically via `QMetaObject::invokeMethod` on `on_autoConfigure_triggered` (no public frontend API; mirrors OBS's own first-run launch), with a manual Tools-menu fallback and a "copy my current video settings" skip option.
 
-**Confirmed in scope (wizard doesn't set these):** 48 kHz/stereo audio, 2-second keyframe interval, NVENC preset adjustment, scenes/sources, transitions, MKV + auto-remux, alerts/multistream assistance, webcam detection.
+**Confirmed in scope (wizard doesn't set these):** 48 kHz/stereo audio, NVENC preset adjustment, scenes/sources, transitions, MKV + auto-remux, alerts/multistream assistance, webcam detection. Keyframe interval is intentionally NOT set by the plugin — in Simple output mode the streaming service applies its recommended interval automatically (see `docs/architecture.md`).
 
 **New scope added:**
 - `/audio` — setup-time mic check (one-click assign, live meter), persistent mic reminder on every OBS launch until configured, and a Tools-menu Mic Troubleshooter (automated checks + guided OS-level checklist).
-- `/hotkeys` — scene hotkeys 1–6 plus a "Quickstart Shortcuts" reference dock (View > Docks; window chrome only, never in program output).
+- `/hotkeys` — scene hotkeys Ctrl+Shift+1–6 (opt-in, not bound by default) plus a "Quickstart Shortcuts" reference dock (View > Docks; window chrome only, never in program output).
 - Stability test reframed as validation: auto-runs as the final performance-validation step (not skippable), retries adjust the encoder's quality control per the per-encoder ladder (NVENC/QSV/AMF/x264; VideoToolbox has no ladder), re-runnable via Tools > Quickstart: Run stability check. Never silently rewrites the wizard's resolution/FPS/bitrate.
 - Bundled default overlays under `data/overlays/` (1920x1080, original/CC0 only), placed automatically by SceneBuilder.

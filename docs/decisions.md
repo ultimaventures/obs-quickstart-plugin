@@ -14,7 +14,9 @@ CPU-tier caps) — battle-tested over years. Duplicating it adds maintenance bur
 ## ADR-002 (2026-09-28): No built-in network speed test
 
 Removed: the /network module, SpeedTestWrapper, `src/network` build entry
-(build entry removed 2026-09-29; the directory is retained but unbuilt).
+(build entry removed 2026-09-29; the directory itself was deleted 2026-09-29 —
+no future speed-test module is planned: OBS's wizard remains the designed path
+for bandwidth measurement, and git history preserves the stub if that changes).
 
 Rationale: the wizard runs real per-server bandwidth tests against the user's actual
 ingest servers with per-server scoring — strictly more accurate than a generic

@@ -16,8 +16,7 @@
 ## Phase 1: Quick Setup Dialog
 
 <!-- 1. [Ask user content type] → Gaming / IRL / Just Chatting --> Not sure how this will change any of the settings, going to skip this question.
-2. [Ask user platform] → Twitch / YouTube / Other
-3. [Stream key] → owned by the Auto-Configuration Wizard (Phase 3), which collects it during setup. No pre-check: a fresh Quickstart profile has no key yet. (If the user chose "copy my current video settings", the key arrives with the copied profile.)
+2. [Stream key] → owned by the Auto-Configuration Wizard (Phase 3), which collects the streaming service and key during setup. No separate platform question: the OBS wizard already asks for the service. No pre-check: a fresh Quickstart profile has no key yet. (If the user chose "copy my current video settings", the key arrives with the copied `service.json`.)
 
 
 ---
@@ -36,11 +35,11 @@
 2. [Create scene collection] → "Quickstart"
 3. [Switch to new profile]
 4. [Run OBS Auto-Configuration Wizard on the new profile]
-   * Primary: trigger programmatically via `QMetaObject::invokeMethod` on `on_autoConfigure_triggered` (no public frontend API exists; this mirrors OBS's own first-run launch) — first confirm via `indexOfSlot`, honor the boolean return for fallback
+   * Primary: trigger programmatically via `QMetaObject::invokeMethod` on `on_autoConfigure_triggered` with `Qt::DirectConnection` from the GUI thread (no public frontend API exists; this mirrors OBS's own first-run launch) — the modal `exec()` blocks until the dialog closes, so snapshot/compare works. First confirm via `indexOfSlot`, honor the boolean return for fallback
    * Fallback: prompt the user to run **Tools > Auto-Configuration Wizard** manually
-   * Skip option: "Copy my current video settings instead" — copies Video/Output keys from the previous profile for users who already ran the wizard
+   * Skip option: "Copy my current video settings instead" — copies the previous profile's `service.json` (stream service, server, and stream key) and Video/Output keys from `basic.ini` for users who already ran the wizard; forces `Output/Mode` to `Simple`
    * The wizard sets: service/server/stream key, Simple output mode, bitrate, encoder, recording encoder/quality, base/output resolution, FPS
-   * The wizard dialog is modal → snapshot Video/Output keys before, compare after; if unchanged (cancelled), prompt before applying plugin settings; then the user clicks Continue in our wizard
+   * The wizard dialog is modal (invoked with `DirectConnection`) → snapshot Video/Output keys before, compare after; if unchanged (cancelled), prompt before applying plugin settings; then the user clicks Continue in our wizard
 
 ---
 
@@ -106,13 +105,20 @@
 
 ---
 
-## Phase 7: Performance Test (Local Recording) — auto-run
+## Phase 7: Apply Audio Filters
+
+1. [Add RNNoise + Compressor + Limiter] (default chain) — benchmark RNNoise CPU cost during implementation; keep the Speex + Noise Gate fallback only if RNNoise proves expensive on min-spec hardware
+2. Filters go on **before** the performance test so the test measures the real configuration, including RNNoise's CPU cost. No test result feeds back into filter selection.
+
+---
+
+## Phase 8: Performance Test (Local Recording) — auto-run
 
 1. [Start 30-second local recording] — runs **automatically** as the final performance-validation step with a progress dialog ("Making sure your PC can handle streaming…"); not presented as a skippable choice
 2. [Monitor metrics] → CPU %, GPU render lag, skipped frames
 3. (Decision: Metrics unstable?)
 
-   * Yes → [Switch NVENC preset Quality → Performance] → Retry recording test
+   * Yes → [Step the encoder's quality control down its ladder] → Retry recording test. Ladder per encoder: **NVENC** preset p-scale toward p1 (p1 = max performance); **QSV** targetusage quality → speed; **AMF** quality preset Quality → Speed; **x264** preset veryfast → ultrafast. (**VideoToolbox** has no quality ladder — run the test once; on instability go straight to the warn/offer step instead of repeating an identical test.)
    * Max retries: 3 attempts
 
      * If still unstable after 3 attempts:
@@ -120,14 +126,7 @@
        * Warn the user; offer to re-run the Auto-Configuration Wizard or apply a conservative fallback (720p30 @ 2500 kbps, x264 ultrafast) with explicit confirmation
        * Never silently rewrite the wizard's resolution/FPS/bitrate
    * No → Proceed to next phase
-4. [CPU measurement feeds Phase 8 filter decision]
-5. Afterwards available via **Tools > Quickstart: Run stability check** (re-run after hardware changes or whenever something feels off)
-
----
-
-## Phase 8: Apply Audio Filters Conditionally
-
-1. [Add RNNoise + Compressor + Limiter] (default) — benchmark RNNoise CPU cost during implementation; keep the Speex + Noise Gate fallback only if RNNoise proves expensive on min-spec hardware
+4. Afterwards available via **Tools > Quickstart: Run stability check** (re-run after hardware changes or whenever something feels off)
 
 ---
 
@@ -143,7 +142,7 @@
 ## Dynamic Monitoring Loop (Optional during setup)
 
 * Continuously monitor CPU %, GPU render lag, dropped frames during recording
-* Adjust NVENC preset as needed (Quality → Performance)
+* Step the encoder's quality control down its ladder as needed (NVENC p-scale toward p1; QSV quality → speed; AMF Quality → Speed; x264 veryfast → ultrafast)
 * Retry local recording until metrics stable (max 3 attempts; see Phase 7)
 * FPS / resolution / bitrate are owned by the Auto-Configuration Wizard and are not adjusted here
 
