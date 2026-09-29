@@ -94,10 +94,24 @@ Decisions (2026-09-28):
   must succeed"** in `main`'s merge-request settings (available on the Free
   tier) so an MR can't merge until the external build passes. Named per-status
   required checks ("status X must succeed") are a paid-tier feature
-  (Premium/Ultimate) — not available here. This mechanism is designed but
-  **not yet tested end-to-end**: verify on a real MR before relying on it.
-  (The mirror itself is also still unverified — see Mirror configuration
-  above.)
+  (Premium/Ultimate) — not available here.
+  - **Race (review 2026-09-29):** mirror push → workflow start → first status
+    leaves a window where the MR looks green with no external pipeline. Fix:
+    the first GitLab CI job on the branch posts a `pending` commit status for
+    the build context before anything else, so the external pipeline is never
+    empty — the MR shows "running", not "green", until GitHub reports back.
+  - **Open question:** whether "Pipelines must succeed" reads the MR's head
+    (GitLab) pipeline or the external one. Must be tested live on a real MR
+    before relying on the gate.
+  - **Trust boundary:** any pusher can edit the workflow and post a forged
+    `success` status with the secret. Treat this as a *build* gate only — it
+    proves the code compiled, not that it's safe. Keep required maintainer
+    approvals on MRs to `main` as the actual code-review gate.
+  This mechanism is designed but **not yet tested end-to-end**: verify on a
+  real MR before relying on it. (The mirror itself is also still unverified —
+  as of 2026-09-29 the GitHub mirror only shows `main` and
+  `sprint-0-template-updates`; `sprint1/profile-module` has not appeared —
+  see Mirror configuration above.)
 
 ## Troubleshooting
 
