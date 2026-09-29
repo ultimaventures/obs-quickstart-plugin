@@ -12,7 +12,7 @@ This document outlines the architecture of the OBS Setup Plugin, designed to aut
   /profile        # New profile & scene collection creation
   /settings       # Plugin-owned settings (preset, audio)
   /sources        # Scene & source creation (+ bundled overlays)
-  /filters        # Conditional audio filter application
+  /filters        # Audio filter application (RNNoise default)
   /monitoring     # Local recording test & metrics
   /ui             # Setup dialog and user interaction
   plugin-main.cpp
@@ -106,11 +106,11 @@ public:
 After switching to the new profile, the setup wizard offers a **"Run OBS's automatic tuner"** button instead of computing video/encoder settings itself:
 
 1. **Primary path:** confirm the slot exists via `mainWindow->metaObject()->indexOfSlot("on_autoConfigure_triggered()")`, then invoke the wizard programmatically —
-   `QMetaObject::invokeMethod(obs_frontend_get_main_window(), "on_autoConfigure_triggered", Qt::QueuedConnection)`.
-   There is no public frontend API for this; it mirrors exactly how OBS launches the wizard on first run. The slot is verified against the OBS 31.1.1 source tree (`frontend/widgets/OBSBasic.hpp`) — the SDK does not ship OBSBasic headers, so re-verify the slot name against source on each OBS major-version bump. Honor the `invokeMethod` boolean return: on false, use the fallback.
+   `QMetaObject::invokeMethod(obs_frontend_get_main_window(), "on_autoConfigure_triggered", Qt::DirectConnection)` **from the GUI thread** (assert it; never from a worker thread — `DirectConnection` invokes the slot synchronously in the *calling* thread).
+   There is no public frontend API for this; it mirrors exactly how OBS launches the wizard on first run. The slot is verified against the OBS 31.1.1 source tree (`frontend/widgets/OBSBasic.hpp`) — the SDK does not ship OBSBasic headers, so re-verify the slot name against source on each OBS major-version bump. `DirectConnection` is required: the slot runs the wizard's modal `exec()`, so the call blocks until the dialog closes, which is what makes before/after snapshot comparison possible (`QueuedConnection` returns immediately, before the wizard has even opened). Honor the `invokeMethod` boolean return: on false, use the fallback.
 2. **Fallback:** if the slot isn't found (future OBS versions), show a prompt guiding the user to **Tools > Auto-Configuration Wizard** manually.
-3. **Skip option:** "Copy my current OBS video settings instead" — copies the Video/Output keys from the previous profile's `basic.ini` via the config API, for users who already ran the wizard and don't want to sit through the bandwidth test again.
-4. Completion detection: snapshot the profile's Video/Output config keys before launching; when the modal dialog closes, compare — if unchanged (the user cancelled), ask whether to continue applying plugin-owned settings to the unconfigured profile or re-run the wizard. Then the user clicks **Continue** and setup proceeds.
+3. **Skip option:** "Copy my current OBS video settings instead" — copies the previous profile's `service.json` (stream service, server, and stream key — `basic.ini` has none of these) and the Video/Output keys from `basic.ini` via the config API, for users who already ran the wizard and don't want to sit through the bandwidth test again. Forces `Output/Mode` to `Simple` — the plugin only manages Simple-mode settings in MVP, and a copied `Advanced` mode would make its preset writes no-ops; the skip-option UI text must say this.
+4. Completion detection: snapshot the profile's Video/Output config keys before invoking; when the modal dialog closes (the `DirectConnection` call returns), compare — if unchanged (the user cancelled), ask whether to continue applying plugin-owned settings to the unconfigured profile or re-run the wizard. Then the user clicks **Continue** and setup proceeds.
 
 *Why not rebuild it:* the wizard runs real per-server bandwidth tests with scoring, top-down encoding probes, and CPU-tier caps — battle-tested over years. The plugin's value is everything around it (scenes, sources, audio, overlays, validation), not re-deriving bitrate tables.
 
@@ -144,11 +144,31 @@ obs_source_t* textSource = obs_source_create(
 **This module applies only what the wizard leaves untouched:**
 
 **Applies:**
-- NVENC preset → p5 default (stepped down the p1–p7 scale toward p1 by /monitoring if GPU-bound; verified against OBS master 2026-09-29)
+- NVENC preset → p5 default (stepped down the p1–p7 scale toward p1 by /monitoring if GPU-bound; verified against OBS 31.1.1 source, 2026-09-29). Exact profile keys per encoder (Simple mode): NVENC → `SimpleOutput` / `NVENCPreset2`; x264 → `SimpleOutput` / `Preset`; QSV → `SimpleOutput` / `QSVPreset`; AMD H.264/HEVC → `SimpleOutput` / `AMDPreset`; AMD AV1 → `SimpleOutput` / `AMDAV1Preset`. (`preset`/`preset2` are NVENC *encoder property* names, not profile config keys — don't write those.)
 - Audio → 48 kHz, Stereo
 - Recording → MKV format, auto-remux to MP4 where supported, Recording Quality → Indistinguishable
 
-**Keyframe interval is intentionally NOT set by the plugin.** Verified against the OBS master source (2026-09-29): in Simple output mode — which the wizard forces — there is no keyframe-interval config path at all (`SimpleOutput` never reads one). The streaming service injects its recommended `keyint` (`rtmp-common.c`: `apply_video_encoder_settings`) before the encoder is updated, so Twitch's recommended 2 s applies automatically. A plugin-set keyframe would require Advanced output mode — deferred, not MVP.
+**Keyframe interval is intentionally NOT set by the plugin.** Verified against the OBS 31.1.1 source (2026-09-29): in Simple output mode — which the wizard forces — there is no keyframe-interval config path at all (`SimpleOutput` never reads one). The streaming service applies its recommended keyframe interval automatically via `obs_service_info::apply_encoder_settings` (invoked as `obs_service_apply_encoder_settings()` before encoders start), so Twitch's recommended 2 s applies. **Limitation:** services that publish no recommendation — notably the custom **"Other"** service — leave the encoder at its default interval; the plugin does not override it in MVP. A plugin-set keyframe would require Advanced output mode — deferred, not MVP.
+
+**"Migrate to Advanced Mode" button** (scoped 2026-09-29; mappings verified against OBS 31.1.1 source):
+
+* Enabled only when `Output` / `Mode` = `Simple`. Hidden or disabled otherwise.
+* Streaming settings migrate 1:1 — the value strings are identical on both sides, so no translation table is needed:
+
+| Simple source | Advanced target |
+|---|---|
+| `SimpleOutput` / `StreamEncoder` (registered encoder id, e.g. `obs_nvenc_h264_tex`) | `AdvOut` / `Encoder` — same id; validate via `obs_encoder_get_display_name()` before writing |
+| `SimpleOutput` / `NVENCPreset2` (`p1`–`p7`) | `streamEncoder.json` → `preset` — identical value strings (verified in `plugins/obs-nvenc/nvenc-properties.c`) |
+| `SimpleOutput` / `VBitrate` | `streamEncoder.json` → `bitrate` (int, kbps; verified in `nvenc-properties.c`) |
+| `SimpleOutput` / `ABitrate` | advanced audio encoder's `bitrate` property (exact persistence location to verify at implementation) |
+| `SimpleOutput` / `Preset` (x264, e.g. `veryfast`) | `streamEncoder.json` → `preset` (value strings to verify at implementation) |
+| QSV / AMF / Apple presets | value-string mapping to verify at implementation — abort migration for unrecognized encoders rather than guessing |
+
+* `streamEncoder.json` is written as `obs_data` JSON into the profile directory — the same shape OBS's own settings dialog produces via `WriteJsonData`.
+* `Output` / `Mode` is written as `Advanced` last, after all targets are staged.
+* **Not migrated:** recording (`SimpleOutput` / `RecQuality` etc. have no Advanced equivalent — Advanced mode needs explicit rate-control settings). On completion the plugin shows a modal: "Recording settings cannot be migrated from Simple to Advanced mode — please set them yourself here," directing the user to Settings → Output (recording section).
+* **Untouched (mode-independent):** `Video` section (base/output resolution, FPS), `Audio` section (sample rate, channels), `service.json` (service + stream key).
+* **Failure rule:** if the Simple encoder id is missing or unrecognized, abort the whole migration with an error — never half-migrate. Implementation must also verify that a stream start picks up the migrated settings without an OBS restart.
 
 **Error Handling:** Validate OBS constraints, fallback to safe presets
 
@@ -159,9 +179,14 @@ obs_source_t* textSource = obs_source_create(
 ```cpp
 class SettingsManager {
 public:
-    void applyEncoderPreset(const std::string& preset);
+    void applyEncoderPreset(const std::string& preset); // writes the exact Simple-mode profile key for the active encoder
+                                                      // (NVENC: SimpleOutput/NVENCPreset2; x264: SimpleOutput/Preset;
+                                                      //  QSV: SimpleOutput/QSVPreset; AMD: SimpleOutput/AMDPreset);
+                                                      // default p5, stepping down toward p1 on GPU-bound
     void applyAudioSettings(); // 48 kHz, stereo
     void applyRecordingSettings(); // MKV + auto-remux + recording quality
+    void migrateToAdvancedMode(); // 1:1 copies per the mapping table above; aborts on unknown encoder;
+                                  // shows the recording-settings modal on success
 };
 ```
 
@@ -193,17 +218,18 @@ public:
 
 ---
 
-### 6. /filters – Conditional Audio Filter Application
+### 6. /filters – Audio Filter Application
 
-**Purpose:** Apply audio filters based on CPU headroom
+**Purpose:** Apply the default mic filter chain (RNNoise is now the default noise suppressor — no runtime CPU → filter switching in MVP)
 
-**Inputs:** Audio sources, CPU usage from monitoring test
+**Inputs:** Audio sources
 
 **Outputs:** Applied filters
 
 **Logic:**
 
-* Default: RNNoise + Compressor + Limiter. Benchmark RNNoise's CPU cost on target hardware during implementation — if it exceeds a few percent of one core on min-spec machines, keep the Speex + Noise Gate fallback for the high-CPU branch. (The old <60% gate was measured on a near-idle desktop and is not a reliable signal.)
+* Default chain: RNNoise + Compressor + Limiter. Benchmark RNNoise's CPU cost on target hardware during implementation — it must be acceptable on min-spec machines before shipping as the default. Keep Speex + Noise Gate only as a documented fallback if RNNoise proves too expensive on min-spec hardware. (The old <60% CPU gate was measured on a near-idle desktop and is not a reliable signal.)
+* Filters are applied **before** the /monitoring stability test, so the test measures the real configuration including RNNoise's cost. No test result feeds back into filter selection.
 
 **Error Handling:** Skip individual filters if they fail, log errors
 
@@ -224,11 +250,11 @@ public:
 
 **Behavior (updated 2026-09-28):** The 30-second recording test runs **automatically as the final performance-validation step** with a progress dialog (audio filters and the setup summary follow it) ("Making sure your PC can handle streaming…") — it is not offered as a skippable choice. It is also exposed as **Tools > Quickstart: Run stability check** for re-runs after hardware changes.
 
-**Role:** validation, not discovery. The wizard's short probes pick the settings; this test catches what they miss — thermal throttling, background load, driver issues — under a sustained 30-second load. Its CPU measurement also feeds /filters (RNNoise vs. Speex decision).
+**Role:** validation, not discovery. The wizard's short probes pick the settings; this test catches what they miss — thermal throttling, background load, driver issues — under a sustained 30-second load. It runs **after** /filters so the measurement reflects the real configuration, including the default RNNoise filter's CPU cost.
 
 **Retry policy:** on instability, retry up to 3 times adjusting only the encoder's quality control — FPS/resolution/bitrate belong to the wizard and are never rewritten silently. Quality ladder per encoder: **NVENC** preset stepped down the p1–p7 scale toward p1 (p1 = max performance); **QSV** targetusage quality → speed; **AMF** quality preset Quality → Speed; **x264** preset veryfast → ultrafast. **VideoToolbox** exposes no quality ladder — run the test once and go straight to the warn/offer step on instability instead of repeating an identical 30-second test. If still unstable after the attempts: warn the user and offer to re-run the Auto-Configuration Wizard or apply a conservative fallback (720p30 @ 2500 kbps, x264 ultrafast) with explicit confirmation.
 
-**Safety:** the test dialog has Cancel and a 45-second timeout; the test recording is deleted afterwards; the test refuses to start while streaming or recording is active.
+**Safety:** the test dialog has Cancel and a 45-second timeout; the test refuses to start while streaming or recording is active. Cleanup deletes **only** the exact recording file path the test created, and waits for any auto-remux to finish first — deleting the MKV early can fail on Windows (file still open), and a broad delete could touch user recordings. Handle both outcomes: original MKV kept, or remuxed MP4 produced.
 
 **CRITICAL: Asynchronous Execution Required**
 
@@ -293,14 +319,14 @@ connect(monitor, &Monitor::metricsUpdated, [](const Metrics& m) {
 **Outputs:** Final configuration confirmation
 
 **Wizard steps (updated 2026-09-28):**
-1. Platform selection (Twitch / YouTube / Other) + stream key check (manual instructions if missing)
+1. Stream key guidance — the OBS wizard collects the streaming service and key in step 3; no separate platform question (the wizard already asks for the service). If the user cancels the wizard, the summary step offers to add the key manually.
 2. Create "Quickstart" profile & scene collection, switch to it
 3. **Run OBS's Auto-Configuration Wizard** on the new profile (programmatic trigger with manual fallback; "copy my current video settings" skip option) — see Module 3
 4. Apply plugin-owned settings (NVENC preset, 48 kHz stereo)
 5. **Microphone check** — one-click device assignment, live level meter — see Module 9
 6. Scene/source creation with bundled overlays
 7. **Stability test** — auto-runs with progress dialog — see Module 7
-8. Conditional audio filters based on measured CPU
+8. Audio filters — RNNoise + Compressor + Limiter (default chain), applied **before** the stability test so the test measures their cost
 9. Summary & next steps (configure game capture, add stream key if missing)
 
 **Tools menu items (registered via `obs_frontend_add_tools_menu_item`):**
@@ -408,11 +434,11 @@ public:
 
 * All OBS API calls on main thread
 * Qt::QueuedConnection for cross-thread calls
-* Worker threads only for network/performance tests
+* Worker threads only for performance tests
 
 ### Qt Integration
 
-* UI uses Qt5/Qt6 widgets
+* UI uses Qt6 widgets
 * QDialog with QWizard pattern
 * Signals/slots for UI updates
 
@@ -432,12 +458,12 @@ public:
 4. /settings — encoder preset, audio (applies on top of wizard output)
 5. /audio — microphone check & assignment
 6. /sources — scenes, sources, bundled overlays (depends on profile & detection)
-7. /hotkeys — bind scene hotkeys 1–6, create shortcut dock (after sources)
-8. /monitoring — auto-run 30-second recording test (after profile, settings, sources)
-9. /filters — conditional audio filters (depends on sources & monitoring CPU measurement)
+7. /hotkeys — bind scene hotkeys Ctrl+Shift+1–6 (opt-in), create shortcut dock (after sources)
+8. /filters — default audio filter chain (after sources, **before** monitoring so the test measures the real config)
+9. /monitoring — auto-run 30-second recording test (after profile, settings, sources, filters)
 10. /ui — orchestrates all modules
 
-**Critical:** /profile before the wizard trigger; wizard before /settings; /monitoring after initial setup; /filters after /monitoring
+**Critical:** /profile before the wizard trigger; wizard before /settings; /filters before /monitoring; /monitoring after initial setup
 
 ---
 
@@ -476,7 +502,7 @@ This plugin is built using the [OBS Plugin Template](https://github.com/obsproje
 
 - Extended directory structure for modular architecture
 - GitLab CI/CD instead of GitHub Actions
-- Custom module organization (detection, network, profile, etc.)
+- Custom module organization (detection, profile, settings, etc.)
 - Qt wizard UI integration
 
 The template provides:

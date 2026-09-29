@@ -74,21 +74,30 @@ Decisions (2026-09-28):
 - When the token expires, pushes/MRs will start failing with 401s — that's
   the signal to rotate it (create a new PAT, replace the vault entry).
 
-## Security hardening (review 2026-09-29)
+## Security hardening (review 2026-09-29, corrected 2026-09-29)
 
 - **Mirror scope:** the GitLab push mirror syncs branches to GitHub, where any
-  pushed branch's `.github/workflows` will run. Configure the mirror to sync
-  **protected branches only**, and protect `main` and tags on GitLab — otherwise
-  anyone with push access could run workflow code against the repo's secrets.
-  Trade-off: feature branches won't get GitHub Actions builds until merged.
-- **Secrets:** gate code-signing secrets (if added later) behind a
-  [GitHub Environment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment)
-  with required reviewers, so a mirrored branch alone can't spend them.
-- **Build gating:** GitLab cannot see GitHub check status, so MRs merge
-  ungated. Fix: have the GitHub Actions workflow post a commit status back to
-  GitLab (`POST /projects/:id/statuses/:sha`) at the end of each run, and mark
-  that status required in `main`'s branch protection. Simpler and more robust
-  than a GitLab CI job polling GitHub's check-runs API.
+  pushed branch's `.github/workflows` will run. Mirror **all branches**, not
+  protected-only: pre-merge build gating only works if GitHub actually builds
+  the feature branch. The earlier "protected branches only" advice is withdrawn
+  — it contradicts the gating below (a protected-only mirror means GitHub never
+  builds MR source branches, so there is nothing to gate on). Security instead
+  comes from: only project members can push branches; `main` and tags are
+  protected on GitLab; code-signing secrets (if added later) are gated behind a
+  GitHub Environment with required reviewers, so a mirrored branch alone can't
+  spend them.
+- **Build gating (Free tier):** GitLab cannot see GitHub check status, so MRs
+  merge ungated. Fix: have the GitHub Actions workflow post a commit status
+  back to GitLab (`POST /projects/:id/statuses/:sha`) at the end of each run —
+  post even on failure (gate that step with `if: always()`). The posted status
+  creates or joins an `external` pipeline on the commit; enable **"Pipelines
+  must succeed"** in `main`'s merge-request settings (available on the Free
+  tier) so an MR can't merge until the external build passes. Named per-status
+  required checks ("status X must succeed") are a paid-tier feature
+  (Premium/Ultimate) — not available here. This mechanism is designed but
+  **not yet tested end-to-end**: verify on a real MR before relying on it.
+  (The mirror itself is also still unverified — see Mirror configuration
+  above.)
 
 ## Troubleshooting
 
