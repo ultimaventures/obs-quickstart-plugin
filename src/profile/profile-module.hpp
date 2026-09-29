@@ -23,7 +23,8 @@ inline constexpr const char *QUICKSTART_SCENE_COLLECTION_BASE_NAME =
  * against OBS 31.1.1); there is no public frontend API for it.
  */
 enum class WizardTriggerResult {
-  Launched,     ///< Slot found and invocation queued on the GUI thread.
+  Completed,    ///< Wizard ran and changed the profile's Video/Output keys.
+  Cancelled,    ///< Wizard ran but left the keys unchanged (user cancelled).
   SlotMissing,  ///< Slot not present (renamed/removed in a future OBS
                 ///< version); caller should guide the user to
                 ///< Tools > Auto-Configuration Wizard manually.
@@ -119,8 +120,10 @@ public:
   /**
    * @brief Launches OBS's Auto-Configuration Wizard on the active profile.
    *
-   * Must not be called while streaming or recording. Uses a queued
-   * invocation so the modal wizard runs after the current call stack unwinds.
+   * Must not be called while streaming or recording. Invokes the wizard's
+   * private slot with Qt::DirectConnection from the GUI thread, so the modal
+   * dialog blocks until it closes; the profile's Video/Output keys are
+   * snapshotted before and compared after to detect cancellation.
    */
   WizardTriggerResult triggerAutoConfigWizard();
 
