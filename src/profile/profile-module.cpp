@@ -49,6 +49,22 @@ std::string deduplicatedName(const std::string &base,
 bool copyDirectoryTree(const std::string &source,
                        const std::string &destination) {
   try {
+    // std::filesystem::copy creates the destination directory itself but not
+    // missing parents (it throws "No such file or directory" on first run),
+    // so establish them first.
+    const std::filesystem::path parent =
+        std::filesystem::path(destination).parent_path();
+    if (!parent.empty()) {
+      std::error_code ec;
+      std::filesystem::create_directories(parent, ec);
+      if (ec) {
+        blog(LOG_ERROR,
+             "[Profile] Could not create parent directories for "
+             "'%s': %s",
+             destination.c_str(), ec.message().c_str());
+        return false;
+      }
+    }
     std::filesystem::copy(
         source, destination,
         std::filesystem::copy_options::recursive |
