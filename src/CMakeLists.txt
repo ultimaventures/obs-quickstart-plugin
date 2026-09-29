@@ -1,6 +1,5 @@
 # Add each module directory
 add_subdirectory(detection)
-add_subdirectory(network)
 add_subdirectory(profile)
 add_subdirectory(settings)
 add_subdirectory(sources)

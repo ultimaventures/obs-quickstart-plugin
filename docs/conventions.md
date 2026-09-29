@@ -7,7 +7,7 @@ This document defines coding, file, and documentation conventions for the OBS Se
 ## 1. Naming Conventions
 
 **Classes:** PascalCase (e.g., `SystemDetector`, `ProfileManager`)
-**Methods / Functions:** camelCase (e.g., `detectEncoders()`, `runLocalRecordingTest()`)
+**Methods / Functions:** camelCase (e.g., `checkMicrophone()`, `runLocalRecordingTest()`)
 **Variables / Members:** camelCase with mandatory `m_` prefix for member variables (e.g., `m_profileName`)
 **Constants:** ALL_CAPS with underscores (e.g., `MAX_CPU_THRESHOLD`)
 **Namespaces:** lowercase with underscores (e.g., `obs_setup`)
@@ -42,8 +42,8 @@ This document defines coding, file, and documentation conventions for the OBS Se
 * Inline comments: `//` only when necessary
 
 ```cpp
-/** Detects available OBS encoders. */
-std::vector<EncoderInfo> detectEncoders();
+/** Checks microphone configuration and device presence. */
+MicStatus checkMicrophone();
 ```
 
 ---
@@ -63,8 +63,8 @@ std::vector<EncoderInfo> detectEncoders();
 
 ## 6. Code Formatting (clang-format)
 
-* Use clang-format **version 19.1.1 exactly**
-* Pin in CI: `apt-get install clang-format-19.1.1`
+* Use clang-format **version 19** (matches the obs-plugintemplate `run-clang-format` GitHub Action, which installs `clang-format@19`)
+* Pin in CI: `apt-get install clang-format-19`
 * Matches OBS Studio and obs-plugintemplate standards
 * Example `.clang-format` snippet:
 
