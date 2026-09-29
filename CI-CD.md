@@ -100,13 +100,26 @@ Decisions (2026-09-28):
     the first GitLab CI job on the branch posts a `pending` commit status for
     the build context before anything else, so the external pipeline is never
     empty — the MR shows "running", not "green", until GitHub reports back.
+    The GitLab `pending` post and the GitHub result **must use the identical
+    status `name` (and `ref`)**, otherwise the pending status never clears.
   - **Open question:** whether "Pipelines must succeed" reads the MR's head
     (GitLab) pipeline or the external one. Must be tested live on a real MR
-    before relying on the gate.
+    before relying on the gate. **Proof plan (review 2026-09-29):** open a
+    throwaway MR carrying a deliberately failing build — if it can merge
+    anyway, the gate doesn't work.
   - **Trust boundary:** any pusher can edit the workflow and post a forged
     `success` status with the secret. Treat this as a *build* gate only — it
     proves the code compiled, not that it's safe. Keep required maintainer
     approvals on MRs to `main` as the actual code-review gate.
+  - **Least-privilege status credential (review 2026-09-29):** posting commit
+    statuses needs an `api`-scope token, and any pusher can write a workflow
+    that reads whatever secret the workflow holds. Use the weakest credential
+    that can post statuses — a fine-grained PAT limited to this project (or a
+    project token with the Developer role where available; project tokens need
+    Premium/Ultimate on gitlab.com SaaS) — never a Maintainer/Owner token.
+    Code-signing secrets, if added later, live in a `main`-only GitHub
+    Environment with required reviewers, so a mirrored branch alone can't
+    spend them.
   This mechanism is designed but **not yet tested end-to-end**: verify on a
   real MR before relying on it. (The mirror itself is also still unverified —
   as of 2026-09-29 the GitHub mirror only shows `main` and
