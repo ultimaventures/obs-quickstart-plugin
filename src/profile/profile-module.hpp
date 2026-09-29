@@ -29,6 +29,9 @@ enum class WizardTriggerResult {
                 ///< version); caller should guide the user to
                 ///< Tools > Auto-Configuration Wizard manually.
   InvokeFailed, ///< QMetaObject::invokeMethod returned false.
+  WrongProfileActive, ///< Refused: the active profile is not the Quickstart
+                      ///< profile the caller named, so launching the wizard
+                      ///< would rewrite the user's real profile.
 };
 
 /**
@@ -120,12 +123,20 @@ public:
   /**
    * @brief Launches OBS's Auto-Configuration Wizard on the active profile.
    *
-   * Must not be called while streaming or recording. Invokes the wizard's
-   * private slot with Qt::DirectConnection from the GUI thread, so the modal
-   * dialog blocks until it closes; the profile's Video/Output keys are
-   * snapshotted before and compared after to detect cancellation.
+   * Must not be called while streaming or recording. As a safety guard, the
+   * call is refused with WrongProfileActive unless the currently active
+   * profile is exactly `expectedProfile` (the Quickstart profile created by
+   * setupQuickstartProfile) — the wizard rewrites the *active* profile, so
+   * launching it against the user's real profile would break the plugin's
+   * core promise. Invokes the wizard's private slot with Qt::DirectConnection
+   * from the GUI thread, so the modal dialog blocks until it closes; the
+   * profile's Video/Output keys are snapshotted before and compared after to
+   * detect cancellation.
+   *
+   * @param expectedProfile Name of the Quickstart profile that must be active.
    */
-  WizardTriggerResult triggerAutoConfigWizard();
+  WizardTriggerResult
+  triggerAutoConfigWizard(const std::string &expectedProfile);
 
   /** @brief Captures the wizard-owned Video/Output keys of the active profile.
    */
