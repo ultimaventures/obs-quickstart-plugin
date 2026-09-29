@@ -289,11 +289,11 @@ ProfileManager::triggerAutoConfigWizard(const std::string &expectedProfile) {
   if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
     blog(LOG_WARNING,
          "[Profile] Wizard launch refused while streaming or recording");
-    return WizardTriggerResult::InvokeFailed;
+    return WizardTriggerResult::Busy;
   }
 
-  QObject *mainWindow =
-      reinterpret_cast<QObject *>(obs_frontend_get_main_window());
+  QMainWindow *mainWindow =
+      static_cast<QMainWindow *>(obs_frontend_get_main_window());
   if (!mainWindow) {
     blog(LOG_ERROR, "[Profile] Could not resolve OBS main window");
     return WizardTriggerResult::InvokeFailed;

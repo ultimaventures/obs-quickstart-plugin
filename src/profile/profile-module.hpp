@@ -32,6 +32,8 @@ enum class WizardTriggerResult {
   WrongProfileActive, ///< Refused: the active profile is not the Quickstart
                       ///< profile the caller named, so launching the wizard
                       ///< would rewrite the user's real profile.
+  Busy, ///< Refused: streaming or recording is active; the UI should tell
+        ///< the user to stop it and retry, not show the fallback guidance.
 };
 
 /**
