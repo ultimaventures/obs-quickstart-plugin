@@ -40,7 +40,8 @@ In addition to directory structures from [OBS Plugin Template](https://github.co
 /obs-quickstart-plugin
   /src
     /detection (empty for now)
-    /network
+    /audio
+    /hotkeys
     /profile
     /settings
     /sources
@@ -94,26 +95,18 @@ Success criteria: Plugin compiles, loads without crashing OBS, shows dialog.
 
 #### Sprint 1: Foundation / System Detection (Week 3-4)
 **Module: SystemDetector**
-- Detect available encoders (NVENC, AMF, QSV, x264)
-- Determine encoder priority and handle missing encoders
 - Detect first available webcam (device ID)
 - Collect CPU & GPU info
 - Tests:
-  - Mock different hardware configurations
-  - Verify encoder priority: NVENC > AMF > QSV > x264
-  - Handle missing encoders gracefully
+  - Mock configurations with/without webcam
+  - Verify CPU count reporting
 
-**Module: SpeedTestWrapper**
-- Optional speed test for upload bandwidth
-- Handles network errors gracefully
-- Returns estimated speed in Mbps
-- Test: Returns plausible speed, fallback if network blocked
 
 **Module: ProfileManager**
-- Create new profile (e.g., "AutoSetup_Beginner_[Platform]") without modifying existing profiles
-- Create new scene collection (e.g., "Beginner_Stream_Setup")
+- Create new profile ("Quickstart", deduplicated if taken) without modifying existing profiles
+- Create new scene collection ("Quickstart")
 - Switch to new profile
-- Apply calculated settings to profile
+- Trigger OBS's Auto-Configuration Wizard on the new profile (programmatic trigger via `QMetaObject::invokeMethod`, manual fallback to Tools > Auto-Configuration Wizard, "copy my current video settings" skip option)
 - Test: Profile and collection created successfully, original untouched
 
 ---
@@ -128,80 +121,54 @@ Success criteria: Plugin compiles, loads without crashing OBS, shows dialog.
 - Don't clutter architecture docs with build pipeline details
 
 #### Sprint 2: Core Logic / Settings Engine (Week 5-6)
-**Module: SettingsCalculator**
-- Calculate optimal resolution, FPS, bitrate based on:
-  - Upload speed
-  - Encoder type
-  - CPU cores
+**Module: SettingsCalculator** (plugin-owned settings only)
+- Apply NVENC preset → p5 default (p1–p7 scale; stepped down toward p1 by stability test if GPU-bound)
+- Apply audio → 48 kHz, Stereo
 - Tests:
-  - Given 7000 kbps → outputs 720p60 @ 4500 kbps
-  - No hardware encoder → uses x264 ultrafast
-  - CPU-limited systems → lower settings
+  - Preset and audio settings applied correctly
 
 **Module: PerformanceMonitor**
-- Record local test for 30 seconds
+- Record local test for 30 seconds — **auto-runs as the final performance-validation step** (progress dialog, not skippable); also available via Tools > Quickstart: Run stability check
 - Monitor CPU usage, GPU load, dropped frames, rendered frames
 - Determine system stability
-- Retry logic: max 3 attempts
-- Fallback: minimum config if unstable after retries
-  - 720p30 @ 2500 kbps, x264 ultrafast
+- Retry logic: max 3 attempts, adjusting NVENC preset only (Quality → Performance)
+- Fallback: if still unstable, warn user and offer to re-run the Auto-Configuration Wizard or apply conservative fallback (720p30 @ 2500 kbps, x264 ultrafast) with explicit confirmation — never silently rewrite the wizard's settings
 - Tests:
   - Returns correct metrics
   - Determines stability according to thresholds
+  - Retry adjusts preset only; resolution/FPS/bitrate untouched
 
 ---
 
 #### Sprint 3: Scene Creation (Week 11-12)
 **Module: SceneBuilder**
-- Create scene structure: Starting Soon, Live, BRB, Ending
+- Create scene structure: Starting Soon, BRB, Just Chatting (full-screen webcam), Gameplay + Webcam, Gameplay Only, Stream Ended
 - Add placeholder sources:
   - Game Capture (mode: fullscreen app; may require user config)
   - Webcam (first detected device)
   - Placeholder text overlays (e.g., "Configure game capture", "Stream title")
+- Place bundled default overlays from `data/overlays/` (Starting Soon / BRB / Stream Ending frames, webcam frame, lower-third; original or CC0-licensed; positioned relative to the real canvas size, never assumed 1920x1080)
 - Tests:
   - Scene structure created
   - Placeholder sources added correctly
+  - Overlay sources reference existing bundled files
+
+**Module: HotkeyManager** (part of Sprint 3)
+- Bind Ctrl+Shift+1–6 to created scenes (1 = Starting Soon, 2 = BRB, 3 = Just Chatting, 4 = Gameplay + Webcam, 5 = Gameplay Only, 6 = Stream Ended) — opt-in during setup, conflict-checked against existing bindings. Bare number keys are avoided: OBS hotkeys are system-global and would switch the live scene while typing in chat or gaming. Rebindable in Settings > Hotkeys
+- Tests: hotkeys bound to correct scenes
 
 ---
 
-#### Sprint 4: Audio Filters (Week 13-14)
-**Module: AudioFilterManager**
-- Apply conditional audio filters based on CPU headroom:
-  - CPU usage during recording test < 60% → RNNoise + Compressor + Limiter
-  - CPU usage ≥ 60% → Speex + Noise Gate only
-- Methods:
-  - `addRNNoise()`, `addSpeex()`, `addCompressor()`, `addLimiter()`
+#### Sprint 4: Microphone Setup & Troubleshooting (Week 13-14)
+*Note (2026-09-29): moved ahead of the UI wizard — the setup wizard's mic-check step depends on this module.*
+**Module: AudioManager**
+- Setup-time mic check: enumerate input devices; one-click "Use this microphone" if unselected; "plug in + Check again" re-scan if none present; live level meter ("talk to test")
+- Persistent reminder: silent mic check on every OBS launch; dialog with "Set up now" / "I don't use a mic" / "Remind me later" (persisted in plugin config, never nag after a deliberate choice)
+- Mic troubleshooter (Tools > Quickstart: Mic troubleshooter): automated checks (device present? muted? wrong device? track mismatch in Advanced output?) with one-click fixes, then guided OS-level checklist (macOS permission, physical mute button, exclusive mode, push-to-talk)
 - Tests:
-  - Filters applied according to CPU thresholds
-
----
-
-#### Sprint 5: UI / Setup Wizard (Week 15-16)
-**Module: SetupWizard (Qt)**
-- Collect user inputs:
-  - Content type (Gaming/IRL/Just Chatting)
-  - Platform(s) (Twitch/YouTube/Both/Other)
-  - Stream key presence
-  - Upload speed (optional, can use speed test)
-- Show summary of calculated settings
-- Display reminders / next steps:
-  - Configure game capture
-  - Add stream key if not present
-- Tests:
-  - Correct user input captured
-  - Summary displayed correctly
-
----
-
-#### Sprint 6: Integration & Final Validation
-- Integrate all modules:
-  - System detection → Settings calculation → Profile creation → Scene & sources → Audio filters → UI wizard
-- Run end-to-end test with:
-  - Multiple hardware configurations
-  - Different CPU/GPU loads
-  - Optional network speed input
-- Validate fallback behavior
-- Validate max retries and minimum config fallback
+  - Device-present-but-unselected → offers one-click assign
+  - No devices → prompts re-scan
+  - Reminder choice persists across launches
 
 
 ## Contributing
@@ -252,3 +219,49 @@ If you have run out of energy or time for your project, put a note at the top of
 - [OBS Setup Plugin Testing Strategy](testing.md)
 
 <!-- tree generated by markdown-notes-tree ends here -->
+---
+
+#### Sprint 5: Audio Filters (Week 15-16)
+**Module: AudioFilterManager**
+- Apply RNNoise + Compressor + Limiter by default; benchmark RNNoise CPU cost during implementation and keep the Speex + Noise Gate fallback only if it is expensive on min-spec hardware
+- Methods:
+  - `addRNNoise()`, `addSpeex()`, `addCompressor()`, `addLimiter()`
+- Tests:
+  - Filters applied according to CPU thresholds
+
+---
+
+#### Sprint 6: UI / Setup Wizard (Week 17-18)
+**Module: SetupWizard (Qt)**
+- Wizard steps:
+  - Platform (Twitch/YouTube/Other) — the OBS wizard collects the stream key in the next step
+  - Create "Quickstart" profile & scene collection, run OBS Auto-Configuration Wizard on it
+  - Apply plugin-owned settings (NVENC preset, 48 kHz stereo)
+  - Microphone check (one-click assign, live level meter)
+  - Scene/source creation with bundled overlays
+  - Stability test (auto-run with progress dialog)
+  - Conditional audio filters from measured CPU
+- Show summary of applied settings
+- Display reminders / next steps:
+  - Configure game capture
+  - Add stream key if not present
+  - Mic setup status, scene hotkeys (Ctrl+Shift+1–6)
+- Create shortcut reference dock (View > Docks > Quickstart Shortcuts)
+- Register Tools menu items: re-run setup wizard, Run stability check, Mic troubleshooter
+- Tests:
+  - Correct user input captured
+  - Summary displayed correctly
+  - Wizard step order (profile → OBS wizard → plugin settings → mic → scenes → stability → filters)
+
+---
+
+#### Sprint 7: Integration & Final Validation
+- Integrate all modules:
+  - System detection → Profile creation → OBS wizard trigger → Plugin settings → Mic check → Scene & sources (+ overlays, hotkeys) → Stability test → Audio filters → UI wizard
+- Run end-to-end test with:
+  - Multiple hardware configurations
+  - Different CPU/GPU loads
+  - Mic present / unselected / absent
+- Validate fallback behavior
+- Validate max retries and minimum config fallback
+

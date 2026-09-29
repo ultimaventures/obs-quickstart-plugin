@@ -39,9 +39,29 @@ Initialize the project codebase by adopting the `obs-plugintemplate`, converting
 
 ### 6. Cleanup & Standardization
 - **Action:** Update `.gitignore`.
-- **Action:** Apply `clang-format 16` to all files.
+- **Action:** Apply `clang-format 19` to all files.
 
 ## Verification
 1. **Build Check:** Run `cmake -S . -B build` and `cmake --build build`.
 2. **Structure Check:** Verify all module folders exist in `src/`.
 3. **Log Check:** Load in OBS and verify "Plugin loaded" message.
+
+## Scope Decisions (2026-09-28)
+
+The following scope decisions were made after this plan was completed, based on research into OBS's built-in Auto-Configuration Wizard (verified against OBS Studio 31.0.0 source). They are recorded here for planning continuity; the normative detail lives in `docs/architecture.md`, `docs/flowchart.md`, `docs/functionality.md`, and `README.md`.
+
+**Deferred to OBS's Auto-Configuration Wizard (struck through in docs, not deleted):**
+- Base/output resolution and FPS selection
+- Encoder selection (NVENC/AMF/QSV/VideoToolbox/x264)
+- Upload-speed-driven bitrate calculation and the `/network` speed-test module
+- Rationale: the wizard runs real per-server bandwidth tests with scoring and top-down encoding probes — battle-tested, and it already runs on first launch. Rebuilding it adds maintenance for no gain.
+
+**New plugin flow:** setup creates a `Quickstart` profile (deduplicated), switches to it, and triggers the wizard on it — programmatically via `QMetaObject::invokeMethod` on `on_autoConfigure_triggered` (no public frontend API; mirrors OBS's own first-run launch), with a manual Tools-menu fallback and a "copy my current video settings" skip option.
+
+**Confirmed in scope (wizard doesn't set these):** 48 kHz/stereo audio, 2-second keyframe interval, NVENC preset adjustment, scenes/sources, transitions, MKV + auto-remux, alerts/multistream assistance, webcam detection.
+
+**New scope added:**
+- `/audio` — setup-time mic check (one-click assign, live meter), persistent mic reminder on every OBS launch until configured, and a Tools-menu Mic Troubleshooter (automated checks + guided OS-level checklist).
+- `/hotkeys` — scene hotkeys 1–6 plus a "Quickstart Shortcuts" reference dock (View > Docks; window chrome only, never in program output).
+- Stability test reframed as validation: auto-runs as the final performance-validation step (not skippable), retries adjust the encoder's quality control per the per-encoder ladder (NVENC/QSV/AMF/x264; VideoToolbox has no ladder), re-runnable via Tools > Quickstart: Run stability check. Never silently rewrites the wizard's resolution/FPS/bitrate.
+- Bundled default overlays under `data/overlays/` (1920x1080, original/CC0 only), placed automatically by SceneBuilder.

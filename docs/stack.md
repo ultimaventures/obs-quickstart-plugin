@@ -30,7 +30,6 @@ Plugin Type: Native OBS plugin (not script)
 - obs-frontend-api (UI/profile/scene collection management)
 - Qt5/Qt6 (for setup wizard dialog)
 - nlohmann/json (for config storage)
-- cpp-httplib or libcurl (for speed test)
 
 ## Optional Dependencies:
 - obs-websocket API (for external monitoring tools)
@@ -44,9 +43,9 @@ Plugin Type: Native OBS plugin (not script)
 
 **macOS (12+):**
 - VideoToolbox framework (system)
-- Metal framework (for GPU detection)
+- Metal framework (system)
 - Required for Apple Silicon (M1/M2/M3) support
 
 **Note:** VideoToolbox is not optional on macOS - it is the primary hardware encoder for modern Macs.
 
-Minimum OBS Version: 28.0+ (for stable frontend API)
+Build target: OBS 31.1.1+ (matches `buildspec.json` — the plugin is built against the OBS 31.1.1 SDK from the plugin template; older runtimes are untested and backwards compatibility is to be verified)

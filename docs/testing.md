@@ -12,18 +12,27 @@ This document defines the testing strategy for the OBS Setup Plugin. It covers u
 
 1. **/detection**
 
-   * Mock multiple hardware configurations (CPU, GPU, webcams)
-   * Test `detectEncoders()` returns expected encoders
+   * Mock configurations with/without webcam
+   * Test CPU count reporting
+   * <s>Test `detectEncoders()` returns expected encoders</s> *(removed 2026-09-28: encoder detection is owned by OBS's Auto-Configuration Wizard)*
 2. **/settings**
 
-   * Bitrate calculation with mocked network speeds
-   * Resolution and encoder selection logic
-   * Validate keyframe intervals, presets
+   * Validate keyframe intervals, presets, audio settings
+   * <s>Bitrate calculation with mocked network speeds; resolution and encoder selection logic</s> *(removed 2026-09-28: owned by the Auto-Configuration Wizard)*
 3. **/filters**
 
    * CPU headroom estimation logic
    * Conditional filter application paths
-4. **Error Handling**
+4. **/audio**
+
+   * Mic check states: configured / present-but-unselected / none-present
+   * One-click assign, re-scan, reminder-choice persistence
+   * Troubleshooter automated checks (muted? wrong device? track mismatch?)
+5. **/hotkeys**
+
+   * Scene hotkeys bound to the correct scenes
+   * Shortcut dock lists exactly the bound mappings
+6. **Error Handling**
 
    * Mock OBS API failures
    * Ensure graceful fallback and rollback occurs
@@ -44,20 +53,18 @@ class OBSMock : public IOBSInterface { /* controlled test data */ };
 * Avoid mocking OBS internals or callbacks
 
 **Test Naming Convention:** `ModuleName_FunctionalityUnderTest_ExpectedBehavior`
-* Example: `SettingsManager_CalculateBitrate_ReturnsSafeValue`
+* Example: `SettingsManager_ApplyEncoderPreset_SetsP5`
 
-**Coverage Requirement:** >80% for core modules (detection, settings, sources, filters, monitoring)
+**Coverage Requirement:** >80% for core modules (detection, settings, sources, filters, monitoring, audio, hotkeys)
 
 **Unit Test Examples:**
 
 ```cpp
-TEST(SystemDetector, DetectEncoders_NvencAvailable_ReturnsNvencFirst) {
+TEST(SystemDetector, GetFirstWebcam_WebcamPresent_ReturnsDeviceId) {
     OBSMock mockOBS;
-    mockOBS.setAvailableEncoders({"ffmpeg_nvenc", "obs_x264"});
+    mockOBS.setAvailableWebcams({"webcam-0"});
     SystemDetector detector(mockOBS);
-    auto encoders = detector.detectEncoders();
-    ASSERT_GE(encoders.size(), 1);
-    EXPECT_EQ(encoders[0].id, "ffmpeg_nvenc");
+    EXPECT_EQ(detector.getFirstWebcam(), "webcam-0");
 }
 ```
 
@@ -72,8 +79,8 @@ TEST(SystemDetector, DetectEncoders_NvencAvailable_ReturnsNvencFirst) {
 1. Profile & Scene Collection Creation
 2. Source Creation & Configuration
 3. Filter Application
-4. Encoder Initialization
-5. Edge Cases (multi-GPU, no webcam)
+<s>4. Encoder Initialization</s> *(removed 2026-09-28: encoder setup is owned by the Auto-Configuration Wizard)*
+4. Edge Cases (multi-GPU, no webcam, no mic)
 
 **Execution:**
 
@@ -191,17 +198,6 @@ valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --log-file=
 - Intel Mac with T2 chip (2018+)
 - Apple Silicon Mac (M1/M2/M3)
 
-**VideoToolbox Tests:**
-```cpp
-TEST(SystemDetector, DetectEncoders_AppleSilicon_ReturnsVideoToolboxFirst) {
-    SystemDetector detector;
-    auto encoders = detector.detectEncoders();
-    
-    ASSERT_GE(encoders.size(), 1);
-    EXPECT_EQ(encoders[0].id, "com.apple.videotoolbox.videoencoder.h264");
-    EXPECT_GT(encoders[0].priority, 90); // Higher than x264
-}
-```
 
 ---
 
@@ -250,28 +246,6 @@ cmake -DCMAKE_CXX_FLAGS="-fsanitize=thread" ..
 
 ---
 
-## 7. Network Module Tests
-
-**Timeout Tests:**
-```cpp
-TEST(NetworkTester, SpeedTest_Timeout_ReturnsSafeDefault) {
-    // Mock server that delays response
-    MockSlowServer server;
-    NetworkTester tester("http://localhost:8080");
-    
-    auto speed = tester.runSpeedTest();
-    
-    EXPECT_EQ(speed, 3500.0); // Safe default
-    EXPECT_LT(tester.elapsedTime(), 35); // Timed out within limit
-}
-
-TEST(NetworkTester, SpeedTest_FirewallBlock_ReturnsSafeDefault) {
-    // Mock firewall rejection
-    NetworkTester tester("http://blocked.example.com");
-    auto speed = tester.runSpeedTest();
-    EXPECT_EQ(speed, 3500.0);
-}
-```
 
 ## 8. Test Organization & Commands
 
@@ -311,5 +285,5 @@ test:
 * **Memory Tests:** Linux CI uses Valgrind/ASAN; Windows optionally with Dr. Memory
 * **Coverage Enforcement:** Core modules must have >80% coverage, reported in CI
 * **System Tests:** Marked for manual execution on physical or VM environments; automated where feasible (Windows VMs, Linux containers)
-* **Format/Conventions Check:** `clang-format` 19.1.1 applied in CI
+* **Format/Conventions Check:** `clang-format` 19 applied in CI
 * **Fail Conditions:** Unit test failures, coverage <80%, or critical memory leaks block merge

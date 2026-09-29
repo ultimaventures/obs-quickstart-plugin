@@ -22,9 +22,7 @@
 >   - 📄 [run-gersemi](build-aux/run-gersemi)
 >   - 📄 [run-swift-format](build-aux/run-swift-format)
 > - 🗒️ [buildspec.json](buildspec.json)
-> - 📄 [clang-format-16](clang-format-16)
 > - 📁 [cmake](cmake)/
->   - 📄 [.DS\_Store](cmake/.DS_Store)
 >   - 📁 [common](cmake/common)/
 >     - 📄 [bootstrap.cmake](cmake/common/bootstrap.cmake)
 >     - 📄 [buildnumber.cmake](cmake/common/buildnumber.cmake)
@@ -58,16 +56,16 @@
 >       - 📄 [resource.rc.in](cmake/windows/resources/resource.rc.in)
 > - 📄 [conventions.md](conventions.md)
 > - 📁 [data](data)/
->   - 📄 [.DS\_Store](data/.DS_Store)
 >   - 📁 [locale](data/locale)/
 >     - 📄 [en-US.ini](data/locale/en-US.ini)
+>   - 📁 [overlays](data/overlays)/ *(planned — bundled default overlays)*
 > - 📄 [flowchart.md](flowchart.md)
 > - 📄 [functionality.md](functionality.md)
 > - 📁 [plans](plans)/
->   - 📄 [.DS\_Store](plans/.DS_Store)
 >   - 📄 [01-setup-obs-plugintemplate.md](plans/01-setup-obs-plugintemplate.md)
 > - 📁 [src](src)/
 >   - 📄 [CMakeLists.txt](src/CMakeLists.txt)
+>   - 📁 [audio](src/audio)/ *(planned — mic check, reminder, troubleshooter)*
 >   - 📁 [detection](src/detection)/
 >     - 📄 [CMakeLists.txt](src/detection/CMakeLists.txt)
 >     - 💻 [detection-module.cpp](src/detection/detection-module.cpp)
@@ -76,11 +74,12 @@
 >     - 📄 [CMakeLists.txt](src/filters/CMakeLists.txt)
 >     - 💻 [filters-module.cpp](src/filters/filters-module.cpp)
 >     - 📄 [filters-module.hpp](src/filters/filters-module.hpp)
+>   - 📁 [hotkeys](src/hotkeys)/ *(planned — scene hotkeys, shortcut dock)*
 >   - 📁 [monitoring](src/monitoring)/
 >     - 📄 [CMakeLists.txt](src/monitoring/CMakeLists.txt)
 >     - 💻 [monitoring-module.cpp](src/monitoring/monitoring-module.cpp)
 >     - 📄 [monitoring-module.hpp](src/monitoring/monitoring-module.hpp)
->   - 📁 [network](src/network)/
+>   - 📁 [network](src/network)/ *(removed from scope 2026-09-28 — see architecture.md)*
 >     - 📄 [CMakeLists.txt](src/network/CMakeLists.txt)
 >     - 💻 [network-module.cpp](src/network/network-module.cpp)
 >     - 📄 [network-module.hpp](src/network/network-module.hpp)
