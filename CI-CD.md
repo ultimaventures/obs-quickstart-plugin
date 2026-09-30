@@ -25,12 +25,35 @@ Decisions (2026-09-28):
 
 1. Work on a feature branch, push to GitLab.
 2. GitLab CI runs fast checks (formatting, etc.).
-3. The GitLab **push mirror** syncs the branch to GitHub automatically.
-4. GitHub Actions runs the build matrix (Windows / macOS / Linux) plus format
-   checks.
-5. Open a merge request on GitLab; merge after review.
-6. Release: push a tag → Actions builds all platforms → artifacts attached to a
+3. Review (agent self-review, Claude reviewer, user). When approved, push the
+   exact commits to `ready/<name>`.
+4. The GitLab **push mirror** (protected-only) syncs `ready/<name>` to GitHub
+   automatically — mirror syncs are triggered by pushes.
+5. GitHub Actions runs the build matrix (Windows / macOS / Linux) plus format
+   checks, then posts the build result back to GitLab.
+6. Open a merge request on GitLab (source branch `ready/<name>`); the merge
+   stays blocked until the 3-OS build is green. Merge after review.
+7. Release: push a tag → Actions builds all platforms → artifacts attached to a
    GitHub Release. No round-trip back to GitLab.
+
+#### For the build agent (2026-09-30)
+
+- Protect the `ready/*` wildcard once in the GitLab UI: Settings → Repository →
+  Protected branches → `ready/*`, allowed to push = Maintainers, allowed to
+  merge = Maintainers.
+- **No new PAT permission is needed, and none should be requested.** The
+  existing permissions (Branch: Create, Code: Push) already let the agent push
+  the reviewed commits to `ready/<name>` — and that push (not the protection)
+  is what triggers the mirror → 3-OS build → status postback → gate. This is
+  deliberate least privilege: with `main` at push = No one, a token able to
+  edit protection rules could lift `main`'s guard and push directly, bypassing
+  the gate. Never request or accept branch-protection permission on this
+  project.
+- Convention: a push to `ready/*` means the work is **reviewed and
+  user-approved**. Never push WIP there. If review findings need fixing, fix
+  on the feature branch first, then push the fixed commits to `ready/<name>`.
+- MRs use source branch `ready/<name>` and tick "delete source branch on
+  merge".
 
 ## Mirror configuration
 
@@ -74,18 +97,49 @@ Decisions (2026-09-28):
 - When the token expires, pushes/MRs will start failing with 401s — that's
   the signal to rotate it (create a new PAT, replace the vault entry).
 
-## Security hardening (review 2026-09-29, corrected 2026-09-29)
+## Security hardening (review 2026-09-29, corrected 2026-09-29, revised 2026-09-30 per review)
 
-- **Mirror scope:** the GitLab push mirror syncs branches to GitHub, where any
-  pushed branch's `.github/workflows` will run. Mirror **all branches**, not
-  protected-only: pre-merge build gating only works if GitHub actually builds
-  the feature branch. The earlier "protected branches only" advice is withdrawn
-  — it contradicts the gating below (a protected-only mirror means GitHub never
-  builds MR source branches, so there is nothing to gate on). Security instead
-  comes from: only project members can push branches; `main` and tags are
-  protected on GitLab; code-signing secrets (if added later) are gated behind a
-  GitHub Environment with required reviewers, so a mirrored branch alone can't
+- **Mirror scope:** protected branches only. Pre-merge build gating works
+  *without* mirroring every branch: the `ready/*` wildcard (below) is a
+  protected branch pattern, so pushing to it triggers the mirror, the 3-OS
+  build, and the gate. The "mirror all branches" advice (2026-09-29) is
+  withdrawn — it is unnecessary under this design and would run every
+  pushed branch's workflows on GitHub. Security comes from: only project
+  members can push branches; `main` and tags are protected on GitLab;
+  code-signing secrets (if added later) are gated behind a GitHub
+  Environment with required reviewers, so a mirrored branch alone can't
   spend them.
+- **The `ready/*` gate workflow (review 2026-09-30):** a human protects the
+  wildcard `ready/*` once (Settings → Repository → Protected branches):
+  allowed to push = Maintainers, allowed to merge = Maintainers
+  (role-level; per-user/per-group granularity is Premium-only, and
+  role-level is all this needs). Work happens on ordinary unprotected
+  feature branches. When the work is done, reviewed, and user-approved,
+  the agent pushes those exact commits to `ready/<name>` — the existing
+  PAT permissions (Branch: Create, Code: Push) already cover this, so **no
+  new PAT permission is needed**, deliberately. The new branch matches the
+  protected wildcard, so it is protected from creation (verify this
+  behavior in the project settings during the proof test); the push
+  triggers the mirror sync, GitHub Actions builds all three OSs, and the
+  workflow posts the result back as a commit status. The MR (source branch
+  `ready/<name>`) cannot merge until the build is green. After merging,
+  delete the `ready/<name>` branch (tick "delete source branch").
+  - Convention: pushing to `ready/*` means "reviewed and approved, ready
+    for the gate." Never push WIP there; fixups go to the feature branch
+    first, then re-push to `ready/<name>`.
+  - Correction (2026-09-30): protecting a branch does *not* trigger a
+    mirror sync — syncs fire on pushes (or the manual "Update now").
+    The earlier "protect the branch to trigger the build" idea was wrong;
+    the push to `ready/<name>` is what triggers it.
+- **Why the agent must NOT get branch-protection permission (review
+  2026-09-30, correcting 2026-09-30):** with `main` at push = No one, a
+  token that can edit protection rules can lift `main`'s guard and then
+  push directly, bypassing the gate entirely. The realistic threat is not
+  token leakage but an agent following a bad, confused, or injected
+  instruction — "my instructions forbid it" is not a control. The
+  fine-grained `Branch → Protect` action covers unprotecting and editing
+  existing rules, so it must not be granted. Keep protection-rule edits
+  human-only; the `ready/*` design removes the need for them.
 - **Build gating (Free tier):** GitLab cannot see GitHub check status, so MRs
   merge ungated. Fix: have the GitHub Actions workflow post a commit status
   back to GitLab (`POST /projects/:id/statuses/:sha`) at the end of each run —
@@ -95,22 +149,22 @@ Decisions (2026-09-28):
   tier) so an MR can't merge until the external build passes. Named per-status
   required checks ("status X must succeed") are a paid-tier feature
   (Premium/Ultimate) — not available here.
-  - **Race (review 2026-09-29):** mirror push → workflow start → first status
-    leaves a window where the MR looks green with no external pipeline. Fix:
-    the first GitLab CI job on the branch posts a `pending` commit status for
-    the build context before anything else, so the external pipeline is never
+  - **Race:** mirror push → workflow start → first status leaves a window
+    where the MR looks green with no external pipeline. Fix: the first
+    GitLab CI job on the branch posts a `pending` commit status for the
+    build context before anything else, so the external pipeline is never
     empty — the MR shows "running", not "green", until GitHub reports back.
     The GitLab `pending` post and the GitHub result **must use the identical
     status `name` (and `ref`)**, otherwise the pending status never clears.
-  - **Open question:** whether "Pipelines must succeed" reads the MR's head
-    (GitLab) pipeline or the external one. Must be tested live on a real MR
-    before relying on the gate. **Proof plan (review 2026-09-29):** open a
-    throwaway MR carrying a deliberately failing build — if it can merge
-    anyway, the gate doesn't work.
+    The `pending` post must ALWAYS be emitted — the fail-closed proof
+    below depends on it.
   - **Trust boundary:** any pusher can edit the workflow and post a forged
     `success` status with the secret. Treat this as a *build* gate only — it
-    proves the code compiled, not that it's safe. Keep required maintainer
-    approvals on MRs to `main` as the actual code-review gate.
+    proves the code compiled, not that it's safe. The actual code-review
+    gate is human: only the Maintainer (currently the sole maintainer) can
+    merge to `main`, and every merge is therefore maintainer-approved by
+    construction. Required-approvals rules are Premium-only, which is moot
+    for a single-maintainer project.
   - **Least-privilege status credential (review 2026-09-29, verified
     2026-09-30):** posting commit statuses needs an `api`-scope token, and
     any pusher can write a workflow that reads whatever secret the workflow
@@ -120,17 +174,26 @@ Decisions (2026-09-28):
     A **fine-grained** PAT *can* be limited to one project (GitLab docs:
     "Group and project access" scoping; introduced as beta in 18.10), so it
     is the documented first choice: scope it to this project only with the
-    minimum permissions that cover the commit-status endpoint. Two caveats:
-    fine-grained PATs are still beta, and the granular permission catalog's
-    coverage of the status endpoint should be confirmed when the token is
-    created — the token's permissions also intersect with the owner's role,
-    so the owner needs at least Developer on the project. Fallback, if the
-    catalog lacks the needed permission: a dedicated bot account with
-    Developer on this project only (check the Free-tier member cap first).
-    Project access tokens would also work but need Premium/Ultimate on
-    gitlab.com SaaS. Code-signing secrets, if added later, live in a
-    `main`-only GitHub Environment with required reviewers, so a mirrored
-    branch alone can't spend them.
+    minimum permissions that cover the commit-status endpoint (the reviewer
+    withdrew the earlier doubt about project scoping on 2026-09-30). Two
+    caveats: fine-grained PATs are still beta, and the granular permission
+    catalog's coverage of the status endpoint should be confirmed when the
+    token is created — the token's permissions also intersect with the
+    owner's role, so the owner needs at least Developer on the project.
+    Fallback, if the catalog lacks the needed permission: a dedicated bot
+    account with Developer on this project only (check the Free-tier member
+    cap first). Project access tokens would also work but need
+    Premium/Ultimate on gitlab.com SaaS. Code-signing secrets, if added
+    later, live in a `main`-only GitHub Environment with required
+    reviewers, so a mirrored branch alone can't spend them.
+  - **Proof plan (review 2026-09-30):** two throwaway MRs before relying on
+    the gate. (1) A deliberately failing build — merging must be blocked.
+    (2) No status ever arrives (e.g., mirror disabled for the test) —
+    merging must also be blocked, proving the fail-closed property; this
+    depends on the GitLab-side `pending` post always existing, so the
+    pending-post job must be implemented before this test. Also confirm a
+    branch created under the `ready/*` wildcard is protected from creation.
+    If any check fails, fall back to the manual build check.
   This mechanism is designed but **not yet tested end-to-end**: verify on a
   real MR before relying on it. (The mirror itself is also still unverified —
   as of 2026-09-29 the GitHub mirror only shows `main` and
