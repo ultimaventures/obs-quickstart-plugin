@@ -32,11 +32,16 @@ check:
 # "Pipelines must succeed" then blocks the MR until GitHub reports back, which
 # makes the gate fail-closed: a missing final post leaves `pending` forever.
 #
-# Requires the GITLAB_STATUS_TOKEN CI/CD variable (project access token with
-# the `api` scope, Protected + Masked). If the token is missing the POST fails,
-# the pipeline fails, and the MR stays blocked.
+# Requires the GITLAB_STATUS_TOKEN CI/CD variable (fine-grained PAT scoped to
+# this project with CI/CD -> Commit Status -> Create, Protected + Masked).
+# If the token is missing or invalid the POST fails, the pipeline fails, and
+# the MR stays blocked.
 post-pending-gate-status:
-  stage: gate
+  # Runs in the first stage, in parallel with `check`: the pending status must
+  # be posted on every ready/* push even if the check job fails — the GitHub
+  # build resolves it to success/failed, and a failed pipeline blocks the MR
+  # on its own.
+  stage: check
   rules:
     - if: $CI_COMMIT_BRANCH =~ /^ready\//
   image: alpine:latest
