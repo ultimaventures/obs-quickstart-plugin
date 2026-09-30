@@ -38,9 +38,14 @@ Decisions (2026-09-28):
 
 #### For the build agent (2026-09-30)
 
-- Protect the `ready/*` wildcard once in the GitLab UI: Settings → Repository →
-  Protected branches → `ready/*`, allowed to push = Maintainers, allowed to
-  merge = Maintainers.
+- Protect two wildcards once in the GitLab UI: Settings → Repository →
+  Protected branches → `ready/*` AND `ci/*`, each with allowed to push =
+  Maintainers, allowed to merge = Maintainers. `ready/*` is for reviewed,
+  user-approved work headed to the build gate (see below). `ci/*` is a
+  no-gate, no-MR escape hatch for pre-approval "please build this" pushes —
+  the first compile of new code should happen there, not after approval
+  (round-6 process gap: the chatbot reviewer cannot compile, and two of the
+  last three packets had compile-breaking omissions).
 - **No new PAT permission is needed, and none should be requested.** The
   existing permissions (Branch: Create, Code: Push) already let the agent push
   the reviewed commits to `ready/<name>` — and that push (not the protection)
@@ -50,10 +55,17 @@ Decisions (2026-09-28):
   the gate. Never request or accept branch-protection permission on this
   project.
 - Convention: a push to `ready/*` means the work is **reviewed and
-  user-approved**. Never push WIP there. If review findings need fixing, fix
-  on the feature branch first, then push the fixed commits to `ready/<name>`.
+  user-approved**. Never push WIP there — WIP build checks go to `ci/<name>`.
+  If review findings need fixing, fix on the feature branch first, then push
+  the fixed commits to `ready/<name>`.
+- `ready/<name>` is append-only after the first push: protected branches
+  reject non-fast-forward pushes, so never rebase or amend once it is pushed
+  — fix forward with new commits instead. Record the pushed SHA in the MR
+  description so the merged commit can be confirmed as the reviewed one.
 - MRs use source branch `ready/<name>` and tick "delete source branch on
-  merge".
+  merge" — but GitLab may refuse to auto-delete a *protected* source branch,
+  so expect `ready/<name>` branches to survive the merge; a Maintainer then
+  deletes them manually (confirm the actual behavior in the proof test).
 
 ## Mirror configuration
 
@@ -122,8 +134,11 @@ Decisions (2026-09-28):
   behavior in the project settings during the proof test); the push
   triggers the mirror sync, GitHub Actions builds all three OSs, and the
   workflow posts the result back as a commit status. The MR (source branch
-  `ready/<name>`) cannot merge until the build is green. After merging,
-  delete the `ready/<name>` branch (tick "delete source branch").
+  `ready/<name>`) cannot merge until the build is green. After merging, the
+  `ready/<name>` branch should be deleted (tick "delete source branch"), but
+  a protected source branch may survive that — see the caveat in "For the
+  build agent" above; confirm in the proof test and delete manually as a
+  Maintainer if GitLab won't.
   - Convention: pushing to `ready/*` means "reviewed and approved, ready
     for the gate." Never push WIP there; fixups go to the feature branch
     first, then re-push to `ready/<name>`.
@@ -137,8 +152,9 @@ Decisions (2026-09-28):
   push directly, bypassing the gate entirely. The realistic threat is not
   token leakage but an agent following a bad, confused, or injected
   instruction — "my instructions forbid it" is not a control. The
-  fine-grained `Branch → Protect` action covers unprotecting and editing
-  existing rules, so it must not be granted. Keep protection-rule edits
+  fine-grained `Branch → Protect` action *may* cover unprotecting and editing
+  existing rules (unverified — the reviewer's inference, not a documented
+  fact), so it must not be granted. Keep protection-rule edits
   human-only; the `ready/*` design removes the need for them.
 - **Build gating (Free tier):** GitLab cannot see GitHub check status, so MRs
   merge ungated. Fix: have the GitHub Actions workflow post a commit status
@@ -186,13 +202,22 @@ Decisions (2026-09-28):
     Premium/Ultimate on gitlab.com SaaS. Code-signing secrets, if added
     later, live in a `main`-only GitHub Environment with required
     reviewers, so a mirrored branch alone can't spend them.
-  - **Proof plan (review 2026-09-30):** two throwaway MRs before relying on
-    the gate. (1) A deliberately failing build — merging must be blocked.
-    (2) No status ever arrives (e.g., mirror disabled for the test) —
-    merging must also be blocked, proving the fail-closed property; this
-    depends on the GitLab-side `pending` post always existing, so the
-    pending-post job must be implemented before this test. Also confirm a
-    branch created under the `ready/*` wildcard is protected from creation.
+  - **Store the token as a GitLab CI variable flagged Protected and Masked**
+    (round-6 correction): otherwise a pipeline on any feature branch can
+    read it.
+  - **Proof plan (review 2026-09-30, extended round 6):** two throwaway MRs
+    before relying on the gate. (1) A deliberately failing build — merging
+    must be blocked. (2) No status ever arrives (e.g., mirror disabled for the
+    test) — merging must also be blocked, proving the fail-closed property;
+    this depends on the GitLab-side `pending` post always existing, so the
+    pending-post job must be implemented before this test. (3) Before
+    building around it, do a real `git push` to `ready/test` with the
+    fine-grained token to confirm Code: Push really suffices for a protected
+    branch (there is a report of limited fine-grained scopes failing there —
+    do not assume). Also confirm a branch created under the `ready/*`
+    wildcard is protected from creation, and check whether "delete source
+    branch on merge" actually deletes the protected `ready/<name>` branch —
+    if not, cleanup is a manual Maintainer step.
     If any check fails, fall back to the manual build check.
   This mechanism is designed but **not yet tested end-to-end**: verify on a
   real MR before relying on it. (The mirror itself is also still unverified —
