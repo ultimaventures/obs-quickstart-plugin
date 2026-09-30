@@ -62,6 +62,11 @@ Decisions (2026-09-28):
   reject non-fast-forward pushes, so never rebase or amend once it is pushed
   — fix forward with new commits instead. Record the pushed SHA in the MR
   description so the merged commit can be confirmed as the reviewed one.
+- Full lifecycle: feature branch (work) → `ci/<name>` (pre-approval build
+  checks; repeat as needed) → chatbot review → user approval →
+  `ready/<name>` (push the exact approved commits; append-only) → MR with
+  the build gate → merge to `main` → Maintainer deletes `ready/<name>`
+  (if GitLab won't auto-delete the protected branch).
 - MRs use source branch `ready/<name>` and tick "delete source branch on
   merge" — but GitLab may refuse to auto-delete a *protected* source branch,
   so expect `ready/<name>` branches to survive the merge; a Maintainer then
