@@ -32,8 +32,9 @@ enum class WizardTriggerResult {
   WrongProfileActive, ///< Refused: the active profile is not the Quickstart
                       ///< profile the caller named, so launching the wizard
                       ///< would rewrite the user's real profile.
-  Busy, ///< Refused: streaming or recording is active; the UI should tell
-        ///< the user to stop it and retry, not show the fallback guidance.
+  Busy, ///< Refused: an output is active (streaming, recording, replay
+        ///< buffer, or virtual camera); the UI should tell the user to stop
+        ///< it and retry, not show the fallback guidance.
 };
 
 /**
@@ -128,7 +129,8 @@ public:
   /**
    * @brief Launches OBS's Auto-Configuration Wizard on the active profile.
    *
-   * Must not be called while streaming or recording. As a safety guard, the
+   * Must not be called while any output is active (streaming, recording,
+   * replay buffer, or virtual camera). As a safety guard, the
    * call is refused with WrongProfileActive unless the currently active
    * profile is exactly `expectedProfile` (the Quickstart profile created by
    * setupQuickstartProfile) — the wizard rewrites the *active* profile, so
@@ -154,7 +156,8 @@ public:
    * @brief Full setup flow: backup current profile, create and activate the
    * Quickstart profile, create and switch to the Quickstart scene collection.
    *
-   * Refuses to run while streaming or recording. On failure after the new
+   * Refuses to run while any output is active (streaming, recording, replay
+   * buffer, or virtual camera). On failure after the new
    * profile was created, rolls back by restoring the previous profile and
    * scene collection, and deleting the new one. The previous profile itself
    * is never modified.
@@ -165,11 +168,12 @@ public:
   bool setupQuickstartProfile(std::string &outProfileName);
 
   /**
-   * @brief True while streaming or recording is active.
+   * @brief True while any output is active: streaming, recording, the replay
+   * buffer, or the virtual camera.
    *
-   * Thread-safe (the frontend active flags are atomic). The UI should check
-   * this before offering setup or wizard actions, since both refuse while
-   * busy; checking first lets the UI explain instead of failing.
+   * The UI should check this before offering setup or wizard actions, since
+   * both refuse while busy; checking first lets the UI explain instead of
+   * failing. All callers run on the GUI thread.
    */
   bool isBusy() const;
 
