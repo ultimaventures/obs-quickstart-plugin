@@ -25,12 +25,17 @@ harness once; it is now the first task of the next sprint.
   - `copyDirectoryTree`: missing destination parent (reviewer round 3);
     non-ASCII UTF-8 directory name (reviewer round 4); nested content;
     overwrite behavior.
-  - Backup-destination construction: build the destination exactly as
-    `backupExistingProfile()` does (`u8path(profilePath).parent_path() /
-    "quickstart-backups" / u8path(profileName + "_" + stamp)`) with a
-    non-ASCII profile name (e.g. `u8"Caf\u00e9"`) and assert the leaf
-    directory name round-trips (reviewer round 5 — this is the regression
-    test for the ANSI-code-page bug).
+  - Backup-destination construction (round-6 correction): extract a pure
+    helper `backupDestinationFor(profilePath, profileName, stamp)` in the
+    module and call it from BOTH `backupExistingProfile()` and the test.
+    The standalone repro's case 5 rebuilds the destination in-test with
+    `u8path` and compares it to a second path built the same way — it is
+    tautological and would still pass if production reverted to
+    `operator/(profileName + "_" + stamp)`. Only a test that calls the
+    production function catches the regression. Test with a non-ASCII
+    profile name (e.g. `u8"Caf\u00e9"`) and assert the leaf directory name
+    round-trips (reviewer round 5 — this is the regression test for the
+    ANSI-code-page bug).
   - `deduplicatedName`: free name unchanged; taken → `Name 2`;
     exhaustion → empty string.
   - `outputConfigChanged`: identical snapshots → false; each field
