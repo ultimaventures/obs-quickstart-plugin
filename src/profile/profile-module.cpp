@@ -18,6 +18,8 @@
 #include <obs-module.h>
 #include <util/config-file.h>
 
+#error "proof-test-1: deliberate build failure for gate proof test (do not merge)"
+
 namespace obs_setup {
 namespace profile {
 
