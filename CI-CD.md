@@ -9,7 +9,9 @@
 
 All development happens on GitLab. GitHub exists only because the OBS plugin
 template's build system is GitHub Actions workflows — the mirror lets us use
-them unmodified. The GitHub repo is public, so Actions minutes are unlimited
+them with one customization: the push workflow also triggers on `ci/**` and
+`ready/**` so pre-approval and gate builds run (GitHub's `*` doesn't cross
+`/`, hence `**`). The GitHub repo is public, so Actions minutes are unlimited
 and free.
 
 Decisions (2026-09-28):
@@ -24,15 +26,25 @@ Decisions (2026-09-28):
 ## How a change flows
 
 1. Work on a feature branch, push to GitLab.
-2. GitLab CI runs fast checks (formatting, etc.).
-3. Review (agent self-review, Claude reviewer, user). When approved, push the
-   exact commits to `ready/<name>`.
-4. The GitLab **push mirror** (protected-only) syncs `ready/<name>` to GitHub
-   automatically — mirror syncs are triggered by pushes.
-5. GitHub Actions runs the build matrix (Windows / macOS / Linux) plus format
-   checks, then posts the build result back to GitLab.
+2. Push the work to `ci/<name>` for pre-approval build checks; repeat as
+   needed. Protected branches reject non-fast-forward pushes, so fix forward
+   — or start a fresh `ci/<name>-2` if history must be rewritten.
+3. GitLab CI runs fast checks (formatting, etc.). The GitLab **push mirror**
+   (protected-only) syncs `ci/<name>` to GitHub automatically — mirror syncs
+   are triggered by pushes, not by protection — and GitHub Actions runs the
+   build matrix (Windows / macOS / Linux) plus format checks.
+4. Review (agent self-review, Claude reviewer, user). When approved, push the
+   exact commits to `ready/<name>`. A push to `ready/*` means the work is
+   **reviewed and user-approved** — never push WIP there. `ready/<name>` is
+   append-only after the first push: never rebase or amend once pushed.
+5. The mirror syncs `ready/<name>`; Actions builds and posts the build result
+   back to GitLab. Record the pushed SHA in the MR description so the merged
+   commit can be confirmed as the reviewed one.
 6. Open a merge request on GitLab (source branch `ready/<name>`); the merge
-   stays blocked until the 3-OS build is green. Merge after review.
+   stays blocked until the 3-OS build is green. Merge after review. Tick
+   "delete source branch on merge" — but GitLab may refuse to auto-delete a
+   *protected* source branch, so expect `ready/<name>` to survive; a
+   Maintainer then deletes it manually (confirm in the proof test).
 7. Release: push a tag → Actions builds all platforms → artifacts attached to a
    GitHub Release. No round-trip back to GitLab.
 
@@ -54,23 +66,10 @@ Decisions (2026-09-28):
   edit protection rules could lift `main`'s guard and push directly, bypassing
   the gate. Never request or accept branch-protection permission on this
   project.
-- Convention: a push to `ready/*` means the work is **reviewed and
-  user-approved**. Never push WIP there — WIP build checks go to `ci/<name>`.
-  If review findings need fixing, fix on the feature branch first, then push
-  the fixed commits to `ready/<name>`.
 - `ready/<name>` is append-only after the first push: protected branches
   reject non-fast-forward pushes, so never rebase or amend once it is pushed
   — fix forward with new commits instead. Record the pushed SHA in the MR
   description so the merged commit can be confirmed as the reviewed one.
-- Full lifecycle: feature branch (work) → `ci/<name>` (pre-approval build
-  checks; repeat as needed) → chatbot review → user approval →
-  `ready/<name>` (push the exact approved commits; append-only) → MR with
-  the build gate → merge to `main` → Maintainer deletes `ready/<name>`
-  (if GitLab won't auto-delete the protected branch).
-- MRs use source branch `ready/<name>` and tick "delete source branch on
-  merge" — but GitLab may refuse to auto-delete a *protected* source branch,
-  so expect `ready/<name>` branches to survive the merge; a Maintainer then
-  deletes them manually (confirm the actual behavior in the proof test).
 
 ## Mirror configuration
 
