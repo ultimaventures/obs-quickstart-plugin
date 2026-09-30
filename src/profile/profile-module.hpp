@@ -58,7 +58,8 @@ struct OutputConfigSnapshot {
  * `existingNames`.
  *
  * Returns `base` unchanged when free, otherwise `base 2`, `base 3`, ...
- * Pure function: performs no OBS calls, fully unit-testable.
+ * Pure function: performs no OBS frontend API calls (uses blog() for
+ * logging; test targets must stub blog).
  *
  * @return A free name, or an empty string if none was found.
  */
@@ -68,7 +69,9 @@ std::string deduplicatedName(const std::string &base,
 /**
  * @brief Copies a directory tree, creating missing parent directories first.
  *
- * Pure filesystem operation: no OBS calls, testable with temp directories.
+ * Pure filesystem operation: no OBS frontend API calls (uses blog() for
+ * logging; test targets must stub blog). Builds paths with u8path so
+ * non-ASCII (UTF-8) profile locations work on Windows.
  *
  * @return True when the copy completed.
  */

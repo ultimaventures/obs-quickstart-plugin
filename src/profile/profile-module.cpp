@@ -63,11 +63,17 @@ std::string deduplicatedName(const std::string &base,
 bool copyDirectoryTree(const std::string &source,
                        const std::string &destination) {
   try {
+    // OBS hands out UTF-8 paths, but std::filesystem::path(std::string) on
+    // Windows decodes narrow strings with the ANSI code page, mangling
+    // non-ASCII usernames (e.g. C:\Users\José\...). u8path decodes as UTF-8
+    // on every platform, and u8string() encodes back the same way; never use
+    // the locale-dependent path(string) constructor or path::string() here.
+    //
     // std::filesystem::copy creates the destination directory itself but not
     // missing parents (it throws "No such file or directory" on first run),
     // so establish them first.
     const std::filesystem::path parent =
-        std::filesystem::path(destination).parent_path();
+        std::filesystem::u8path(destination).parent_path();
     if (!parent.empty()) {
       std::error_code ec;
       std::filesystem::create_directories(parent, ec);
@@ -80,7 +86,7 @@ bool copyDirectoryTree(const std::string &source,
       }
     }
     std::filesystem::copy(
-        source, destination,
+        std::filesystem::u8path(source), std::filesystem::u8path(destination),
         std::filesystem::copy_options::recursive |
             std::filesystem::copy_options::overwrite_existing);
   } catch (const std::filesystem::filesystem_error &error) {
@@ -229,15 +235,15 @@ bool ProfileManager::backupExistingProfile() {
 
   const std::string stamp = std::to_string(std::time(nullptr));
   const std::filesystem::path dest =
-      std::filesystem::path(profilePath).parent_path() / "quickstart-backups" /
-      (profileName + "_" + stamp);
+      std::filesystem::u8path(profilePath).parent_path() /
+      "quickstart-backups" / (profileName + "_" + stamp);
 
   blog(LOG_INFO, "[Profile] Backing up profile '%s' to '%s'",
-       profileName.c_str(), dest.string().c_str());
-  if (!copyDirectoryTree(profilePath, dest.string()))
+       profileName.c_str(), dest.u8string().c_str());
+  if (!copyDirectoryTree(profilePath, dest.u8string()))
     return false;
 
-  m_lastBackupPath = dest.string();
+  m_lastBackupPath = dest.u8string();
   return true;
 }
 
