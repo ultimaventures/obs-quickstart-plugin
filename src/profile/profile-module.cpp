@@ -52,6 +52,17 @@ bool checkGuiThread(const char *caller) {
   return true;
 }
 
+/** Joins output names for log/UI messages: "recording, virtual camera". */
+std::string joinNames(const std::vector<std::string> &names) {
+  std::string joined;
+  for (const auto &name : names) {
+    if (!joined.empty())
+      joined += ", ";
+    joined += name;
+  }
+  return joined;
+}
+
 } // namespace
 
 std::string deduplicatedName(const std::string &base,
@@ -317,8 +328,8 @@ ProfileManager::triggerAutoConfigWizard(const std::string &expectedProfile) {
 
   if (isBusy()) {
     blog(LOG_WARNING,
-         "[Profile] Wizard launch refused: an output is active (streaming, "
-         "recording, replay buffer, or virtual camera)");
+         "[Profile] Wizard launch refused: output active (%s); stop it first",
+         joinNames(activeOutputs()).c_str());
     return WizardTriggerResult::Busy;
   }
 
@@ -447,14 +458,23 @@ bool ProfileManager::rollbackProfileCreation(
   return true;
 }
 
-bool ProfileManager::isBusy() const {
+std::vector<std::string> ProfileManager::activeOutputs() const {
   // Any live output holds encoder/pipeline state that a profile switch or
   // the wizard would yank out from under: streaming, recording, the replay
   // buffer, and the virtual camera all count as busy.
-  return obs_frontend_streaming_active() || obs_frontend_recording_active() ||
-         obs_frontend_replay_buffer_active() ||
-         obs_frontend_virtualcam_active();
+  std::vector<std::string> active;
+  if (obs_frontend_streaming_active())
+    active.emplace_back("streaming");
+  if (obs_frontend_recording_active())
+    active.emplace_back("recording");
+  if (obs_frontend_replay_buffer_active())
+    active.emplace_back("replay buffer");
+  if (obs_frontend_virtualcam_active())
+    active.emplace_back("virtual camera");
+  return active;
 }
+
+bool ProfileManager::isBusy() const { return !activeOutputs().empty(); }
 
 bool ProfileManager::setupQuickstartProfile(std::string &outProfileName) {
   if (!checkGuiThread("setupQuickstartProfile"))
@@ -462,8 +482,8 @@ bool ProfileManager::setupQuickstartProfile(std::string &outProfileName) {
 
   if (isBusy()) {
     blog(LOG_WARNING,
-         "[Profile] Setup refused: an output is active (streaming, recording, "
-         "replay buffer, or virtual camera)");
+         "[Profile] Setup refused: output active (%s); stop it first",
+         joinNames(activeOutputs()).c_str());
     return false;
   }
 

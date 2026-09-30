@@ -33,8 +33,9 @@ enum class WizardTriggerResult {
                       ///< profile the caller named, so launching the wizard
                       ///< would rewrite the user's real profile.
   Busy, ///< Refused: an output is active (streaming, recording, replay
-        ///< buffer, or virtual camera); the UI should tell the user to stop
-        ///< it and retry, not show the fallback guidance.
+        ///< buffer, or virtual camera); the UI should name it via
+        ///< activeOutputs() and tell the user to stop it and retry,
+        ///< not show the fallback guidance.
 };
 
 /**
@@ -173,9 +174,19 @@ public:
    *
    * The UI should check this before offering setup or wizard actions, since
    * both refuse while busy; checking first lets the UI explain instead of
-   * failing. All callers run on the GUI thread.
+   * failing. Use activeOutputs() to name the offending outputs. All callers
+   * run on the GUI thread.
    */
   bool isBusy() const;
+
+  /**
+   * @brief Names of the currently active outputs: "streaming", "recording",
+   * "replay buffer", and/or "virtual camera". Empty when idle.
+   *
+   * Lets the UI tell the user exactly what to stop instead of failing with a
+   * generic busy refusal. All callers run on the GUI thread.
+   */
+  std::vector<std::string> activeOutputs() const;
 
 private:
   std::vector<std::string> listProfiles() const;
