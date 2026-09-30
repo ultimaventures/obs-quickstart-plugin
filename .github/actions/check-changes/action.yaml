@@ -68,8 +68,16 @@ runs:
                   # New branch pushed (e.g. via remote mirror): diff against
                   # the default branch instead of the empty tree, so only
                   # this branch's own changes are checked.
-                  default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+                  # NOTE: actions/checkout does not create refs/remotes/origin/HEAD,
+                  # so the symbolic-ref lookup can fail — never let it abort the
+                  # script (bash -e -o pipefail is active), and verify the
+                  # resulting ref exists before diffing against it.
+                  default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)
                   GIT_BASE_REF="origin/${default_branch:-main}"
+                  if ! git cat-file -e "${GIT_BASE_REF}" &> /dev/null; then
+                    echo "::warning::Default branch ref ${GIT_BASE_REF} not found; falling back to empty-tree diff"
+                    GIT_BASE_REF='4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+                  fi
                 else
                   GIT_BASE_REF="${GITHUB_REF_BEFORE}"
                 fi
