@@ -153,7 +153,8 @@ public:
    *
    * Refuses to run while streaming or recording. On failure after the new
    * profile was created, rolls back by restoring the previous profile and
-   * deleting the new one. The previous profile itself is never modified.
+   * scene collection, and deleting the new one. The previous profile itself
+   * is never modified.
    *
    * @param[out] outProfileName Receives the created profile name on success.
    * @return True when the Quickstart profile is ready for the wizard.
@@ -171,6 +172,7 @@ private:
 
   std::string m_lastBackupPath;
   std::string m_previousProfile;
+  std::string m_previousSceneCollection;
 };
 
 } // namespace profile

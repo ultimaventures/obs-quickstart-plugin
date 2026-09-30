@@ -6,6 +6,7 @@
 #include <filesystem>
 
 #include <QCoreApplication>
+#include <QMainWindow>
 #include <QMetaObject>
 #include <QObject>
 #include <QThread>
@@ -310,7 +311,7 @@ ProfileManager::triggerAutoConfigWizard(const std::string &expectedProfile) {
     return WizardTriggerResult::SlotMissing;
   }
 
-  // DirectConnection from the GUI thread (asserted above): the slot runs the
+  // DirectConnection from the GUI thread (checked above): the slot runs the
   // wizard's modal exec() synchronously, so this call blocks until the dialog
   // closes — which is what makes before/after snapshot comparison possible.
   // QueuedConnection would return immediately, before the wizard opens.
@@ -386,6 +387,12 @@ bool ProfileManager::rollbackProfileCreation(
     return false;
   }
 
+  // Scene collections are global, not per-profile: the failed setup switched
+  // to the new collection, so restore the previous one as well.
+  if (!m_previousSceneCollection.empty())
+    obs_frontend_set_current_scene_collection(
+        m_previousSceneCollection.c_str());
+
   if (!deleteProfile(createdProfile)) {
     blog(LOG_ERROR,
          "[Profile] Rollback incomplete: created profile '%s' "
@@ -426,6 +433,7 @@ bool ProfileManager::setupQuickstartProfile(std::string &outProfileName) {
          "[Profile] Profile creation failed; previous profile untouched");
     return false;
   }
+  m_previousSceneCollection = currentSceneCollectionName();
 
   const std::optional<std::string> collectionName =
       createSceneCollection(QUICKSTART_SCENE_COLLECTION_BASE_NAME);
