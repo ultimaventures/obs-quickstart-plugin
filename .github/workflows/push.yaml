@@ -6,7 +6,6 @@ on:
       - master
       - main
       - 'release/**'
-      - sprint-0-template-updates
       - 'ci/**'
       - 'ready/**'
     tags:
@@ -16,7 +15,7 @@ permissions:
 jobs:
   check-format:
     name: Check Formatting 🔍
-    if: github.ref_name == 'master' || github.ref_name == 'main' || github.ref_name == 'sprint-0-template-updates' || startsWith(github.ref_name, 'ci/') || startsWith(github.ref_name, 'ready/')
+    if: github.ref_name == 'master' || github.ref_name == 'main' || startsWith(github.ref_name, 'ci/') || startsWith(github.ref_name, 'ready/')
     uses: ./.github/workflows/check-format.yaml
     permissions:
       contents: read
@@ -30,7 +29,7 @@ jobs:
 
   create-release:
     name: Create Release 🛫
-    if: github.ref_type == 'tag' || github.ref_name == 'sprint-0-template-updates'
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     needs: build-project
     defaults:
