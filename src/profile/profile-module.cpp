@@ -183,8 +183,12 @@ ProfileManager::createNewProfile(const std::string &name) {
 
   if (currentProfileName() != finalName) {
     blog(LOG_ERROR,
-         "[Profile] Profile '%s' created but not activated (active: '%s')",
+         "[Profile] Profile '%s' created but not activated (active: '%s'); "
+         "removing the inactive profile",
          finalName.c_str(), currentProfileName().c_str());
+    // The orphan is inactive, so deleting it through the API is safe — and
+    // leaving it would contradict the "previous profile untouched" promise.
+    deleteProfile(finalName);
     return std::nullopt;
   }
 
