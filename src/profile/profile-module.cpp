@@ -17,6 +17,7 @@
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <util/config-file.h>
+#error "deliberate proof-test build failure (do not merge)"
 
 namespace obs_setup {
 namespace profile {
