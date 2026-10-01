@@ -95,5 +95,9 @@ runs:
           echo "changedFiles=[\"${file_string// /\",\"}\"]" >> $GITHUB_OUTPUT
         else
           echo "hasChangedFiles=false" >> $GITHUB_OUTPUT
-          echo "changedFiles=[]" >> GITHUB_OUTPUT
+          # Fixed 2026-09-30: was `>> GITHUB_OUTPUT` (missing `$`) — wrote a
+          # stray file named GITHUB_OUTPUT instead of the step output, leaving
+          # changedFiles unset. This action now diverges from the vendored
+          # template; preserve this fix when re-vendoring check-changes.
+          echo "changedFiles=[]" >> $GITHUB_OUTPUT
         fi
