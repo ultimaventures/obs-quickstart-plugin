@@ -313,7 +313,8 @@ ProfileManager::triggerAutoConfigWizard(const std::string &expectedProfile) {
 
   if (isBusy()) {
     blog(LOG_WARNING,
-         "[Profile] Wizard launch refused while streaming or recording");
+         "[Profile] Wizard launch refused: an output is active (streaming, "
+         "recording, replay buffer, or virtual camera)");
     return WizardTriggerResult::Busy;
   }
 
@@ -443,7 +444,12 @@ bool ProfileManager::rollbackProfileCreation(
 }
 
 bool ProfileManager::isBusy() const {
-  return obs_frontend_streaming_active() || obs_frontend_recording_active();
+  // Any live output holds encoder/pipeline state that a profile switch or
+  // the wizard would yank out from under: streaming, recording, the replay
+  // buffer, and the virtual camera all count as busy.
+  return obs_frontend_streaming_active() || obs_frontend_recording_active() ||
+         obs_frontend_replay_buffer_active() ||
+         obs_frontend_virtualcam_active();
 }
 
 bool ProfileManager::setupQuickstartProfile(std::string &outProfileName) {
@@ -451,7 +457,9 @@ bool ProfileManager::setupQuickstartProfile(std::string &outProfileName) {
     return false;
 
   if (isBusy()) {
-    blog(LOG_WARNING, "[Profile] Setup refused while streaming or recording");
+    blog(LOG_WARNING,
+         "[Profile] Setup refused: an output is active (streaming, recording, "
+         "replay buffer, or virtual camera)");
     return false;
   }
 
