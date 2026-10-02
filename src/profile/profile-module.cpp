@@ -112,10 +112,14 @@ ProfileManager::createNewProfile(const std::string &name) {
   if (finalName.empty())
     return std::nullopt;
 
-  // Fire-and-forget through the frontend API (queued invokeMethod, void
-  // return): OBS creates the profile and activates it. On the GUI thread the
-  // queued call executes synchronously via Qt::AutoConnection, so a single
-  // verification read below is sufficient.
+  // Fire-and-forget through the frontend API (void return):
+  // obs_frontend_create_profile -> OBSStudioAPI::obs_frontend_create_profile
+  // -> QMetaObject::invokeMethod(main, "CreateNewProfile", AutoConnection),
+  // which is DirectConnection (synchronous) from the GUI thread, and
+  // CreateNewProfile -> SetupNewProfile -> ActivateProfile activates the new
+  // profile before returning (verified against OBS 31.1.1 source, 2026-09-29).
+  // The void return still can't report failure, so verify both existence and
+  // activation below.
   obs_frontend_create_profile(finalName.c_str());
 
   const std::vector<std::string> profiles = listProfiles();
@@ -123,6 +127,13 @@ ProfileManager::createNewProfile(const std::string &name) {
       profiles.end()) {
     blog(LOG_ERROR, "[Profile] Profile '%s' missing after creation",
          finalName.c_str());
+    return std::nullopt;
+  }
+
+  if (currentProfileName() != finalName) {
+    blog(LOG_ERROR,
+         "[Profile] Profile '%s' created but not activated (active: '%s')",
+         finalName.c_str(), currentProfileName().c_str());
     return std::nullopt;
   }
 
@@ -223,8 +234,22 @@ ProfileManager::createSceneCollection(const std::string &name) {
   return finalName;
 }
 
-WizardTriggerResult ProfileManager::triggerAutoConfigWizard() {
+WizardTriggerResult
+ProfileManager::triggerAutoConfigWizard(const std::string &expectedProfile) {
   assertGuiThread();
+
+  // Safety guard first: the wizard rewrites the ACTIVE profile. Refuse unless
+  // the Quickstart profile created by setupQuickstartProfile is the one
+  // that's active — launching otherwise would rewrite the user's real
+  // profile, breaking the plugin's core promise.
+  const std::string activeProfile = currentProfileName();
+  if (activeProfile != expectedProfile) {
+    blog(LOG_ERROR,
+         "[Profile] Wizard launch refused: active profile '%s' is not the "
+         "Quickstart profile '%s'",
+         activeProfile.c_str(), expectedProfile.c_str());
+    return WizardTriggerResult::WrongProfileActive;
+  }
 
   if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
     blog(LOG_WARNING,
