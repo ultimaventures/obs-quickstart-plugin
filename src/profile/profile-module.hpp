@@ -64,7 +64,7 @@ std::string deduplicatedName(const std::string &base,
                              const std::vector<std::string> &existingNames);
 
 /**
- * @brief Copies a directory tree, used for profile backup/restore.
+ * @brief Copies a directory tree, creating missing parent directories first.
  *
  * Pure filesystem operation: no OBS calls, testable with temp directories.
  *
