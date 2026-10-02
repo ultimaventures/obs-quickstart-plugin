@@ -21,8 +21,21 @@ namespace {
 /** Maximum "Name N" suffixes probed when deduplicating. */
 constexpr int MAX_DEDUPE_ATTEMPTS = 1000;
 
-/** Debug aid: all frontend API calls must run on the GUI thread. */
-void assertGuiThread() { assert(QThread::currentThread() == qApp->thread()); }
+/**
+ * All frontend API calls must run on the GUI thread. A plain assert is not
+ * enough: it compiles out under NDEBUG, and triggerAutoConfigWizard runs a
+ * modal GUI slot via DirectConnection on the calling thread, which would
+ * crash Qt if that weren't the GUI thread. So this is a runtime check that
+ * logs and fails closed in release builds too.
+ */
+bool checkGuiThread(const char *caller) {
+  assert(QThread::currentThread() == qApp->thread());
+  if (QThread::currentThread() != qApp->thread()) {
+    blog(LOG_ERROR, "[Profile] %s called off the GUI thread; refusing", caller);
+    return false;
+  }
+  return true;
+}
 
 } // namespace
 
@@ -122,7 +135,8 @@ std::string ProfileManager::deduplicatedProfileName(const std::string &base) {
 
 std::optional<std::string>
 ProfileManager::createNewProfile(const std::string &name) {
-  assertGuiThread();
+  if (!checkGuiThread("createNewProfile"))
+    return std::nullopt;
 
   const std::string finalName = deduplicatedProfileName(name);
   if (finalName.empty())
@@ -159,7 +173,8 @@ ProfileManager::createNewProfile(const std::string &name) {
 }
 
 bool ProfileManager::switchToProfile(const std::string &name) {
-  assertGuiThread();
+  if (!checkGuiThread("switchToProfile"))
+    return false;
 
   obs_frontend_set_current_profile(name.c_str());
 
@@ -171,7 +186,8 @@ bool ProfileManager::switchToProfile(const std::string &name) {
 }
 
 bool ProfileManager::deleteProfile(const std::string &name) {
-  assertGuiThread();
+  if (!checkGuiThread("deleteProfile"))
+    return false;
 
   // Never delete the active profile through the API: OBS routes that case
   // through its interactive remove-profile flow.
@@ -193,7 +209,8 @@ bool ProfileManager::deleteProfile(const std::string &name) {
 }
 
 bool ProfileManager::backupExistingProfile() {
-  assertGuiThread();
+  if (!checkGuiThread("backupExistingProfile"))
+    return false;
 
   char *rawPath = obs_frontend_get_current_profile_path();
   if (!rawPath) {
@@ -225,7 +242,8 @@ bool ProfileManager::backupExistingProfile() {
 
 std::optional<std::string>
 ProfileManager::createSceneCollection(const std::string &name) {
-  assertGuiThread();
+  if (!checkGuiThread("createSceneCollection"))
+    return std::nullopt;
 
   const std::string finalName = deduplicatedName(name, listSceneCollections());
   if (finalName.empty())
@@ -252,7 +270,8 @@ ProfileManager::createSceneCollection(const std::string &name) {
 
 WizardTriggerResult
 ProfileManager::triggerAutoConfigWizard(const std::string &expectedProfile) {
-  assertGuiThread();
+  if (!checkGuiThread("triggerAutoConfigWizard"))
+    return WizardTriggerResult::InvokeFailed;
 
   // Safety guard first: the wizard rewrites the ACTIVE profile. Refuse unless
   // the Quickstart profile created by setupQuickstartProfile is the one
@@ -355,7 +374,8 @@ bool ProfileManager::outputConfigChanged(
 
 bool ProfileManager::rollbackProfileCreation(
     const std::string &createdProfile) {
-  assertGuiThread();
+  if (!checkGuiThread("rollbackProfileCreation"))
+    return false;
 
   // Switch back before deleting: deleting the active profile would take
   // OBS's interactive remove-profile path.
@@ -380,7 +400,8 @@ bool ProfileManager::rollbackProfileCreation(
 }
 
 bool ProfileManager::setupQuickstartProfile(std::string &outProfileName) {
-  assertGuiThread();
+  if (!checkGuiThread("setupQuickstartProfile"))
+    return false;
 
   if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
     blog(LOG_WARNING, "[Profile] Setup refused while streaming or recording");
