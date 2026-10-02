@@ -85,14 +85,16 @@ plugin config dir via `obs_module_config_path("quickstart-backups")`.
   kilobytes; deleting backups buys nothing and adds irreversible
   destructive logic to a safety feature. Keep every backup. If hygiene ever
   matters, it becomes an explicit user-facing "clear old backups" action.
-- **Keep full profile copies, including `service.json`** (Muse judgment,
-  reviewer round 5, not separately user-confirmed): excluding stream
-  settings would weaken disaster recovery — a backup that cannot restore
-  the stream key is a partial backup. Consequence, stated plainly: under
-  the no-retention policy above, timestamped copies of the stream key
-  accumulate indefinitely in `quickstart-backups/`. Flag this to the user
-  before the backup move lands; if they want keys excluded, say so and the
-  plan changes.
+- **Keep full profile copies, including `service.json`** (user decision,
+  2026-09-30; reviewer round 6 had recommended excluding it, user overruled
+  on the merits): the key already lives on the same disk under the same
+  user, permissions, and encryption in the OBS profiles directory —
+  copying it into `quickstart-backups/` crosses no security boundary and
+  grants no new access, so excluding it buys nothing while weakening
+  disaster recovery (a backup that cannot restore the stream key is a
+  partial backup) and adding exclusion special-casing to the backup code.
+  Timestamped copies of the key accumulate under the no-retention rule;
+  stale copies are harmless (a regenerated key kills the old one).
 - Keep the `u8path`/`u8string()` handling (already in the code): OBS paths
   are UTF-8; `path(string)` on Windows decodes with the ANSI code page.
 
