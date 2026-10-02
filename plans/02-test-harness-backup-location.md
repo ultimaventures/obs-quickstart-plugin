@@ -81,18 +81,42 @@ plugin config dir via `obs_module_config_path("quickstart-backups")`.
   `quickstart-backups/` folder risks appearing as a phantom profile).
 
 **Decisions:**
-- **No retention / no auto-deletion** (user, 2026-09-30): profiles are
-  kilobytes; deleting backups buys nothing and adds irreversible
-  destructive logic to a safety feature. Keep every backup. If hygiene ever
-  matters, it becomes an explicit user-facing "clear old backups" action.
+- **Retention: the backup lives only as long as it can be needed** (user
+  decision, 2026-09-30 — reverses the same-day no-retention decision, per
+  reviewer round-6 recommendation with one amendment):
+  - On success — defined as the setup flow reaching its final summary with
+    no rollback — delete this run's backup. The original profile is never
+    deleted by the plugin (only backed up; setup creates and activates a
+    new profile), so post-success the backup is redundant: the user can
+    always switch back to their original profile.
+  - On failure or cancel, keep the backup. The UI shows its location, notes
+    it includes the stream key like the profile itself does, and offers a
+    per-run "Delete backup" button.
+  - A "Delete all Quickstart backups" action in the plugin UI covers
+    leftovers from crashes and failed runs; the README documents the backup
+    folder for anyone uninstalling. The plugin cannot clean up on uninstall
+    (no uninstall hook in the OBS plugin API), and the installer must not
+    wipe `plugin_config`; the Quickstart profile and scene collection
+    intentionally survive as ordinary user data.
+  - Guards, since this is destructive logic in a safety feature: delete only
+    the exact path this run created (`m_lastBackupPath`), verified to
+    resolve under `<plugin_config>/quickstart-backups/` — never `remove_all`
+    on anything else; only delete when the original profile directory still
+    exists and contains `basic.ini` (never remove the last copy); do not
+    byte-verify backup vs. original (OBS may re-save `basic.ini` on profile
+    switch, failing spuriously and silently restoring keep-everything);
+    log every deletion with its path.
+  - Work item: the deletion logic (a `deleteLastBackup()` method plus UI
+    wiring) is new code for a future sprint, not part of the
+    backup-location move.
 - **Keep full profile copies, including `service.json`** (Muse judgment,
   reviewer round 5, not separately user-confirmed): excluding stream
   settings would weaken disaster recovery — a backup that cannot restore
-  the stream key is a partial backup. Consequence, stated plainly: under
-  the no-retention policy above, timestamped copies of the stream key
-  accumulate indefinitely in `quickstart-backups/`. Flag this to the user
-  before the backup move lands; if they want keys excluded, say so and the
-  plan changes.
+  the stream key is a partial backup. Under the retention policy above this
+  is near-moot: on success the key copy lives only for the minutes setup
+  runs; it persists only on failure/cancel/crash, where the UI discloses it
+  and offers deletion. Still flag the final call to the user before the
+  backup move lands.
 - Keep the `u8path`/`u8string()` handling (already in the code): OBS paths
   are UTF-8; `path(string)` on Windows decodes with the ANSI code page.
 
