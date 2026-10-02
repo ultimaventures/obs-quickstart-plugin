@@ -19,4 +19,52 @@ check:
   script:
     - echo "Checking C++ file formatting..."
     # Ensure we're using the correct version of clang-format as per conventions.md
-    - find src -iname '*.cpp' -o -iname '*.hpp' | xargs clang-format-19 --dry-run -Werror
+    - find src -iname '*.cpp' -o -iname '*.hpp' | xargs -r clang-format-19 --dry-run -Werror
+
+# Merge-gate status: GitLab side.
+#
+# When a ready/* branch is pushed, post the initial `pending` gate status for
+# the GitHub 3-OS build. The GitHub workflow resolves it to success/failed via
+# the `post-gate-status` job in .github/workflows/push.yaml. The status `name`
+# MUST match on both sides: "github/3os-build".
+#
+# "Pipelines must succeed" then blocks the MR until GitHub reports back, which
+# makes the gate fail-closed: a missing final post leaves `pending` forever.
+#
+# Requires the GITLAB_STATUS_TOKEN CI/CD variable (fine-grained PAT scoped to
+# this project with CI/CD -> Commit Status -> Create, Protected + Masked).
+# If the token is missing or invalid the POST fails, the pipeline fails, and
+# the MR stays blocked.
+post-pending-gate-status:
+  # Runs in the first stage, in parallel with `check`: the pending status must
+  # be posted on every ready/* push even if the check job fails — the GitHub
+  # build resolves it to success/failed, and a failed pipeline blocks the MR
+  # on its own.
+  stage: check
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^ready\//
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache curl jq
+  script:
+    - |
+      # Never clobber a final status. If this job runs after GitHub already
+      # posted success/failed (slow shared runner, or a manual retry), GitLab
+      # may reject the success -> pending transition and fail this job —
+      # blocking the MR on a green build. Skip the post when the status
+      # already exists; a retry that finds `pending` is a harmless no-op.
+      existing_state=$(curl --silent --show-error \
+        --header "PRIVATE-TOKEN: ${GITLAB_STATUS_TOKEN}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/repository/commits/${CI_COMMIT_SHA}/statuses?per_page=100" \
+        | jq -r '.[] | objects | select(.name == "github/3os-build") | .status')
+      if [ -n "$existing_state" ]; then
+        echo "github/3os-build already exists with status '${existing_state}' - skipping pending post"
+        exit 0
+      fi
+      curl --fail --silent --show-error --request POST \
+        --header "PRIVATE-TOKEN: ${GITLAB_STATUS_TOKEN}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/statuses/${CI_COMMIT_SHA}" \
+        --data-urlencode "state=pending" \
+        --data-urlencode "name=github/3os-build" \
+        --data-urlencode "description=GitHub 3-OS build queued — result pending" \
+        --data-urlencode "target_url=https://github.com/ultimaventures/obs-quickstart-plugin/actions"

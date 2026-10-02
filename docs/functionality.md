@@ -12,13 +12,20 @@ This document lists **only steps that a native OBS plugin can automate**, includ
 
 **Keyframe Interval**
 
-* Not set by the plugin. In Simple output mode (forced by the wizard) OBS has no keyframe-interval config path — the streaming service injects its recommended `keyint` automatically (Twitch: 2 s). Verified against OBS master source, 2026-09-29.
+* Not set by the plugin. In Simple output mode (forced by the wizard) OBS has no keyframe-interval config path — the streaming service applies its recommended keyframe interval automatically via `obs_service_info::apply_encoder_settings` (verified against OBS 31.1.1 source, 2026-09-29). Limitation: services that publish no recommendation — notably the custom **"Other"** service — leave the encoder at its default interval; the plugin does not override it in MVP.
 
 **NVENC Preset**
 
-* Default: p5 (p1–p7 scale, p1 = max performance; verified against OBS master, 2026-09-29)
+* Default: p5 (p1–p7 scale, p1 = max performance; verified against OBS 31.1.1 source, 2026-09-29)
 * If GPU usage > 85% → step down the p1–p7 scale toward p1
-* Plugin can monitor GPU stats and adjust preset automatically (Simple mode honors the `preset`/`preset2` profile keys)
+* Plugin writes the exact profile keys per encoder (Simple mode): NVENC → `SimpleOutput` / `NVENCPreset2`; x264 → `SimpleOutput` / `Preset`; QSV → `SimpleOutput` / `QSVPreset`; AMD H.264/HEVC → `SimpleOutput` / `AMDPreset`; AMD AV1 → `SimpleOutput` / `AMDAV1Preset`. (`preset`/`preset2` are NVENC *encoder property* names, not profile config keys — don't write those.)
+
+**Migrate to Advanced Mode**
+
+* A "Migrate to Advanced Mode" button in the plugin's settings UI, visible only while Output Mode is Simple.
+* Copies the streaming settings the plugin manages from Simple to Advanced output mode: encoder selection, encoder preset, and video/audio bitrates (1:1 value copies — verified against OBS 31.1.1 source, 2026-09-29; see `docs/architecture.md` § /settings for the key mapping table).
+* Untouched, because they're mode-independent: video settings (base/output resolution, FPS), audio settings (sample rate, channels), and the stream service + key.
+* Recording settings are intentionally NOT migrated. When migration completes, a modal tells the user: "Recording settings cannot be migrated from Simple to Advanced mode — please set them yourself here," and points them to Settings → Output (recording section).
 
 ---
 
@@ -38,7 +45,7 @@ Plugin can add and configure filters on microphone sources:
 
 1. **Noise Suppression**
 
-   * Options: RNNoise (high quality), Speex (low CPU)
+   * RNNoise (default) — benchmark its CPU cost during implementation; keep Speex only as a fallback if RNNoise proves too expensive on min-spec hardware
 2. **Noise Gate**
 
    * Close threshold: -40 dB
@@ -125,12 +132,12 @@ Plugin test flow:
    * GPU rendering lag
 3. Adjust dynamically on instability:
 
-   * Switch NVENC preset (Quality → Performance)
+   * Step the encoder's quality control down its ladder (NVENC p-scale toward p1; QSV quality → speed; AMF Quality → Speed; x264 veryfast → ultrafast; VideoToolbox has no ladder — run once, then warn/offer)
    * Retry recording test (max 3 attempts)
 4. If still unstable after 3 attempts: warn the user and offer options — re-run OBS's Auto-Configuration Wizard, or apply a conservative fallback (720p30 @ 2500 kbps, x264 ultrafast) with explicit user confirmation. The plugin never silently rewrites the wizard's resolution/FPS/bitrate.
 5. Finalize optimized profile
 
-*Note (2026-09-28): Retry logic no longer lowers FPS/resolution/bitrate directly — those are owned by the Auto-Configuration Wizard. The test's role is validation (catching thermal throttling, background load, and driver issues the wizard's short probes miss), and its CPU measurement feeds the conditional audio-filter logic in section 2.*
+*Note (2026-09-29): Retry logic no longer lowers FPS/resolution/bitrate directly — those are owned by the Auto-Configuration Wizard. The test's role is validation (catching thermal throttling, background load, and driver issues the wizard's short probes miss). Audio filters are applied **before** the test, so it measures the real configuration including RNNoise's CPU cost; no test result feeds back into filter selection.*
 
 ---
 
