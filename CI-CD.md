@@ -111,15 +111,26 @@ Decisions (2026-09-28):
     `success` status with the secret. Treat this as a *build* gate only — it
     proves the code compiled, not that it's safe. Keep required maintainer
     approvals on MRs to `main` as the actual code-review gate.
-  - **Least-privilege status credential (review 2026-09-29):** posting commit
-    statuses needs an `api`-scope token, and any pusher can write a workflow
-    that reads whatever secret the workflow holds. Use the weakest credential
-    that can post statuses — a fine-grained PAT limited to this project (or a
-    project token with the Developer role where available; project tokens need
-    Premium/Ultimate on gitlab.com SaaS) — never a Maintainer/Owner token.
-    Code-signing secrets, if added later, live in a `main`-only GitHub
-    Environment with required reviewers, so a mirrored branch alone can't
-    spend them.
+  - **Least-privilege status credential (review 2026-09-29, verified
+    2026-09-30):** posting commit statuses needs an `api`-scope token, and
+    any pusher can write a workflow that reads whatever secret the workflow
+    holds. Use the weakest credential that can post statuses — never a
+    Maintainer/Owner token. A **classic** PAT with `api` scope acts as its
+    owner across every project they can reach, so it is the wrong choice.
+    A **fine-grained** PAT *can* be limited to one project (GitLab docs:
+    "Group and project access" scoping; introduced as beta in 18.10), so it
+    is the documented first choice: scope it to this project only with the
+    minimum permissions that cover the commit-status endpoint. Two caveats:
+    fine-grained PATs are still beta, and the granular permission catalog's
+    coverage of the status endpoint should be confirmed when the token is
+    created — the token's permissions also intersect with the owner's role,
+    so the owner needs at least Developer on the project. Fallback, if the
+    catalog lacks the needed permission: a dedicated bot account with
+    Developer on this project only (check the Free-tier member cap first).
+    Project access tokens would also work but need Premium/Ultimate on
+    gitlab.com SaaS. Code-signing secrets, if added later, live in a
+    `main`-only GitHub Environment with required reviewers, so a mirrored
+    branch alone can't spend them.
   This mechanism is designed but **not yet tested end-to-end**: verify on a
   real MR before relying on it. (The mirror itself is also still unverified —
   as of 2026-09-29 the GitHub mirror only shows `main` and
