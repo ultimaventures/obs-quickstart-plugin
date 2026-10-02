@@ -16,6 +16,7 @@
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
+#include <util/config-file.h>
 
 namespace obs_setup {
 namespace profile {
