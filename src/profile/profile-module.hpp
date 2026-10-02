@@ -164,6 +164,15 @@ public:
    */
   bool setupQuickstartProfile(std::string &outProfileName);
 
+  /**
+   * @brief True while streaming or recording is active.
+   *
+   * Thread-safe (the frontend active flags are atomic). The UI should check
+   * this before offering setup or wizard actions, since both refuse while
+   * busy; checking first lets the UI explain instead of failing.
+   */
+  bool isBusy() const;
+
 private:
   std::vector<std::string> listProfiles() const;
   std::vector<std::string> listSceneCollections() const;

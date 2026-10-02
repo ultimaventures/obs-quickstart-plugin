@@ -293,7 +293,7 @@ ProfileManager::triggerAutoConfigWizard(const std::string &expectedProfile) {
     return WizardTriggerResult::WrongProfileActive;
   }
 
-  if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+  if (isBusy()) {
     blog(LOG_WARNING,
          "[Profile] Wizard launch refused while streaming or recording");
     return WizardTriggerResult::Busy;
@@ -412,11 +412,15 @@ bool ProfileManager::rollbackProfileCreation(
   return true;
 }
 
+bool ProfileManager::isBusy() const {
+  return obs_frontend_streaming_active() || obs_frontend_recording_active();
+}
+
 bool ProfileManager::setupQuickstartProfile(std::string &outProfileName) {
   if (!checkGuiThread("setupQuickstartProfile"))
     return false;
 
-  if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+  if (isBusy()) {
     blog(LOG_WARNING, "[Profile] Setup refused while streaming or recording");
     return false;
   }
