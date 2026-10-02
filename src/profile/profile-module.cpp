@@ -402,6 +402,24 @@ bool ProfileManager::rollbackProfileCreation(
   if (!checkGuiThread("rollbackProfileCreation"))
     return false;
 
+  // Restore the previous scene collection FIRST, independently of the
+  // profile switch below: if the profile switch fails, the user must not be
+  // left on the empty Quickstart collection too. A failed collection restore
+  // is a warning, not a rollback failure — the public frontend API cannot
+  // delete a scene collection, so a leftover empty Quickstart collection is
+  // documented here rather than treated as fatal.
+  if (!m_previousSceneCollection.empty()) {
+    obs_frontend_set_current_scene_collection(
+        m_previousSceneCollection.c_str());
+    if (currentSceneCollectionName() != m_previousSceneCollection) {
+      blog(LOG_WARNING,
+           "[Profile] Rollback could not restore scene collection '%s'; "
+           "the empty Quickstart collection may remain (no public frontend "
+           "API can delete a scene collection)",
+           m_previousSceneCollection.c_str());
+    }
+  }
+
   // Switch back before deleting: deleting the active profile would take
   // OBS's interactive remove-profile path.
   if (!switchToProfile(m_previousProfile)) {
@@ -410,12 +428,6 @@ bool ProfileManager::rollbackProfileCreation(
          m_previousProfile.c_str());
     return false;
   }
-
-  // Scene collections are global, not per-profile: the failed setup switched
-  // to the new collection, so restore the previous one as well.
-  if (!m_previousSceneCollection.empty())
-    obs_frontend_set_current_scene_collection(
-        m_previousSceneCollection.c_str());
 
   if (!deleteProfile(createdProfile)) {
     blog(LOG_ERROR,
