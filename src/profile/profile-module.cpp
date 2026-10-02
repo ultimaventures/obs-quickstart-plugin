@@ -1,3 +1,4 @@
+#error "deliberate gate test failure"
 #include "profile-module.hpp"
 
 #include <algorithm>
