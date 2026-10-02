@@ -250,16 +250,24 @@ WizardTriggerResult ProfileManager::triggerAutoConfigWizard() {
     return WizardTriggerResult::SlotMissing;
   }
 
-  // Queued so the modal wizard runs after the current call stack unwinds.
+  // DirectConnection from the GUI thread (asserted above): the slot runs the
+  // wizard's modal exec() synchronously, so this call blocks until the dialog
+  // closes — which is what makes before/after snapshot comparison possible.
+  // QueuedConnection would return immediately, before the wizard opens.
+  const OutputConfigSnapshot before = snapshotOutputConfig();
   const bool ok = QMetaObject::invokeMethod(
-      mainWindow, "on_autoConfigure_triggered", Qt::QueuedConnection);
+      mainWindow, "on_autoConfigure_triggered", Qt::DirectConnection);
   if (!ok) {
     blog(LOG_ERROR, "[Profile] Failed to invoke auto-config wizard slot");
     return WizardTriggerResult::InvokeFailed;
   }
 
-  blog(LOG_INFO, "[Profile] Auto-Configuration Wizard launched");
-  return WizardTriggerResult::Launched;
+  if (outputConfigChanged(before)) {
+    blog(LOG_INFO, "[Profile] Auto-Configuration Wizard completed");
+    return WizardTriggerResult::Completed;
+  }
+  blog(LOG_INFO, "[Profile] Auto-Configuration Wizard closed without changes");
+  return WizardTriggerResult::Cancelled;
 }
 
 OutputConfigSnapshot ProfileManager::snapshotOutputConfig() const {
