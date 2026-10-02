@@ -53,14 +53,28 @@ runs:
             fi
           fi
         else
+          new_branch=false
           if ! git cat-file -e ${GITHUB_REF_BEFORE} &> /dev/null; then
             GITHUB_REF_BEFORE='4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+            new_branch=true
           fi
 
           GIT_BASE_REF='HEAD~1'
           case "${GITHUB_EVENT_NAME}" in
             pull_request) GIT_BASE_REF="origin/${GITHUB_BASE_REF}" ;;
-            push) if [[ "${GITHUB_EVENT_FORCED}" != 'true' ]]; then GIT_BASE_REF="${GITHUB_REF_BEFORE}"; fi ;;
+            push)
+              if [[ "${GITHUB_EVENT_FORCED}" != 'true' ]]; then
+                if [[ "${new_branch}" == 'true' ]]; then
+                  # New branch pushed (e.g. via remote mirror): diff against
+                  # the default branch instead of the empty tree, so only
+                  # this branch's own changes are checked.
+                  default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+                  GIT_BASE_REF="origin/${default_branch:-main}"
+                else
+                  GIT_BASE_REF="${GITHUB_REF_BEFORE}"
+                fi
+              fi
+              ;;
             *) ;;
           esac
         fi
