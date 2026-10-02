@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator> // istreambuf_iterator
 #include <string>
 #include <system_error>
 
