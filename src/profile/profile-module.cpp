@@ -4,6 +4,9 @@
 #include <cassert>
 #include <ctime>
 #include <filesystem>
+#include <string>
+#include <type_traits>
+#include <utility>
 
 #include <QCoreApplication>
 #include <QMainWindow>
@@ -16,6 +19,17 @@
 
 namespace obs_setup {
 namespace profile {
+
+// The UTF-8 path handling in this file depends on
+// std::filesystem::path::u8string() returning std::string (C++17). In C++20
+// it returns std::u8string instead, which would silently break every call
+// site below — fail loudly on a standard bump so the handling gets revisited
+// instead of compiling into something wrong.
+static_assert(
+    std::is_same_v<
+        decltype(std::declval<const std::filesystem::path &>().u8string()),
+        std::string>,
+    "path::u8string() must return std::string: revisit UTF-8 path handling");
 
 namespace {
 
@@ -234,9 +248,13 @@ bool ProfileManager::backupExistingProfile() {
   }
 
   const std::string stamp = std::to_string(std::time(nullptr));
+  // Every component built from OBS strings goes through u8path: operator/
+  // with a plain std::string would decode profileName with the Windows ANSI
+  // code page, mangling non-ASCII profile names (e.g. "Café"). OBS hands out
+  // UTF-8; keep it UTF-8 all the way down.
   const std::filesystem::path dest =
       std::filesystem::u8path(profilePath).parent_path() /
-      "quickstart-backups" / (profileName + "_" + stamp);
+      "quickstart-backups" / std::filesystem::u8path(profileName + "_" + stamp);
 
   blog(LOG_INFO, "[Profile] Backing up profile '%s' to '%s'",
        profileName.c_str(), dest.u8string().c_str());
