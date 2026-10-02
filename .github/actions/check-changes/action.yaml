@@ -53,14 +53,36 @@ runs:
             fi
           fi
         else
+          new_branch=false
           if ! git cat-file -e ${GITHUB_REF_BEFORE} &> /dev/null; then
             GITHUB_REF_BEFORE='4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+            new_branch=true
           fi
 
           GIT_BASE_REF='HEAD~1'
           case "${GITHUB_EVENT_NAME}" in
             pull_request) GIT_BASE_REF="origin/${GITHUB_BASE_REF}" ;;
-            push) if [[ "${GITHUB_EVENT_FORCED}" != 'true' ]]; then GIT_BASE_REF="${GITHUB_REF_BEFORE}"; fi ;;
+            push)
+              if [[ "${GITHUB_EVENT_FORCED}" != 'true' ]]; then
+                if [[ "${new_branch}" == 'true' ]]; then
+                  # New branch pushed (e.g. via remote mirror): diff against
+                  # the default branch instead of the empty tree, so only
+                  # this branch's own changes are checked.
+                  # NOTE: actions/checkout does not create refs/remotes/origin/HEAD,
+                  # so the symbolic-ref lookup can fail — never let it abort the
+                  # script (bash -e -o pipefail is active), and verify the
+                  # resulting ref exists before diffing against it.
+                  default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)
+                  GIT_BASE_REF="origin/${default_branch:-main}"
+                  if ! git cat-file -e "${GIT_BASE_REF}" &> /dev/null; then
+                    echo "::warning::Default branch ref ${GIT_BASE_REF} not found; falling back to empty-tree diff"
+                    GIT_BASE_REF='4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+                  fi
+                else
+                  GIT_BASE_REF="${GITHUB_REF_BEFORE}"
+                fi
+              fi
+              ;;
             *) ;;
           esac
         fi
@@ -73,5 +95,9 @@ runs:
           echo "changedFiles=[\"${file_string// /\",\"}\"]" >> $GITHUB_OUTPUT
         else
           echo "hasChangedFiles=false" >> $GITHUB_OUTPUT
-          echo "changedFiles=[]" >> GITHUB_OUTPUT
+          # Fixed 2026-09-30: was `>> GITHUB_OUTPUT` (missing `$`) — wrote a
+          # stray file named GITHUB_OUTPUT instead of the step output, leaving
+          # changedFiles unset. This action now diverges from the vendored
+          # template; preserve this fix when re-vendoring check-changes.
+          echo "changedFiles=[]" >> $GITHUB_OUTPUT
         fi

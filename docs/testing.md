@@ -122,19 +122,18 @@ TEST_F(SourceIntegrationTest, CreateWebcam_DeviceDetected_AddsToScene) {
 }
 ```
 
-**Test:** Filter application conditional on CPU
+**Test:** Default filter chain (RNNoise is the default; no CPU-conditional switching in MVP)
 ```cpp
-TEST_F(FilterIntegrationTest, ApplyFilters_HighCPU_UsesSpeexNotRNNoise) {
-    // Mock high CPU usage
-    mockMonitor.setCPUUsage(75.0);
-    
+TEST_F(FilterIntegrationTest, ApplyFilters_DefaultChain_UsesRNNoise) {
     // Execute: Apply filters
     FilterManager fm;
     fm.applyFilters(audioSource);
-    
-    // Verify: Speex applied, RNNoise not applied
-    EXPECT_TRUE(sourceHasFilter(audioSource, "Speex"));
-    EXPECT_FALSE(sourceHasFilter(audioSource, "RNNoise"));
+
+    // Verify: RNNoise + Compressor + Limiter applied; Speex not applied
+    EXPECT_TRUE(sourceHasFilter(audioSource, "RNNoise"));
+    EXPECT_TRUE(sourceHasFilter(audioSource, "Compressor"));
+    EXPECT_TRUE(sourceHasFilter(audioSource, "Limiter"));
+    EXPECT_FALSE(sourceHasFilter(audioSource, "Speex"));
 }
 ```
 
