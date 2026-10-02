@@ -98,6 +98,18 @@ plugin config dir via `obs_module_config_path("quickstart-backups")`.
     (no uninstall hook in the OBS plugin API), and the installer must not
     wipe `plugin_config`; the Quickstart profile and scene collection
     intentionally survive as ordinary user data.
+  - "Delete all" carries the same guards as per-run deletion, tightened for
+    the wider blast radius: iterate only *direct children* of
+    `<plugin_config>/quickstart-backups/` whose names match
+    `<name>_<digits>` and which contain `basic.ini`; verify containment by
+    comparing canonical path *components*, not a string prefix; refuse if
+    the backups root resolves through a symlink; require a typed
+    confirmation in the UI before anything is removed.
+  - Store the original profile's *directory path* (e.g.
+    `m_originalProfilePath`) when the backup is made. Directory names can
+    differ from display names, so never reconstruct it from the display
+    name; the per-run deletion guard ("original still exists with
+    `basic.ini`") checks that stored path.
   - Guards, since this is destructive logic in a safety feature: delete only
     the exact path this run created (`m_lastBackupPath`), verified to
     resolve under `<plugin_config>/quickstart-backups/` — never `remove_all`
