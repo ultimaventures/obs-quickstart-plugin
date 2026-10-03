@@ -279,6 +279,7 @@ bool ProfileManager::backupExistingProfile() {
     return false;
 
   m_lastBackupPath = dest.u8string();
+  m_backupRoot = dest.parent_path().u8string();
   return true;
 }
 
@@ -292,11 +293,12 @@ bool ProfileManager::deleteLastBackup() {
   std::error_code ec;
   const std::filesystem::path backupDir =
       std::filesystem::u8path(m_lastBackupPath);
-  // Guard: only delete inside the quickstart-backups root, never an
-  // arbitrary path. A corrupted m_lastBackupPath must not become an rm -rf.
-  if (backupDir.parent_path().filename().u8string() != "quickstart-backups") {
+  // Guard: the backup must sit directly inside the exact root recorded at
+  // backup time. A corrupted m_lastBackupPath must not become an rm -rf.
+  if (m_backupRoot.empty() ||
+      backupDir.parent_path().u8string() != m_backupRoot) {
     blog(LOG_ERROR,
-         "[Profile] Refusing to delete backup outside quickstart-backups: "
+         "[Profile] Refusing to delete backup outside the recorded root: "
          "'%s'",
          m_lastBackupPath.c_str());
     return false;
@@ -310,6 +312,7 @@ bool ProfileManager::deleteLastBackup() {
   blog(LOG_INFO, "[Profile] Deleted redundant backup '%s' (%llu entries)",
        m_lastBackupPath.c_str(), static_cast<unsigned long long>(removed));
   m_lastBackupPath.clear();
+  m_backupRoot.clear();
   return true;
 }
 

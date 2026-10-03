@@ -1,7 +1,10 @@
-# v0.1.0-alpha1 — Tester Pre-release (DRAFT)
+# 0.1.0-alpha1 — Tester Pre-release (DRAFT)
 
 > **This is an alpha for testers only — not ready for public use.**
 > The plugin is under active development. Expect rough edges.
+>
+> When publishing: paste these notes **above** the checksums block in the
+> release body (the workflow appends checksums automatically).
 
 ## What this build does
 
@@ -13,37 +16,46 @@
   button if something goes wrong and send us the text).
 - On success the redundant backup is deleted automatically. On failure a
   backup is kept and its location is shown in the dialog.
+- Note: the "Copy details" text includes file paths, which on Windows
+  contain your username (e.g. `C:\Users\YourName\...`). Only share it with
+  us.
 
 ## Installing
 
 ### Windows
 
-1. Download `obs-quickstart-plugin-0.1.0-alpha1-windows-x64.zip` below.
+1. Download the `-windows-x64.zip` file below.
 2. Close OBS.
 3. Extract the zip into your OBS installation folder (the `obs-plugins`
-   directory should merge with the existing one).
+   directory should merge with the existing one). If you extract to
+   `C:\Program Files`, Windows may prompt for administrator permission
+   (UAC) — this is normal.
 4. Open OBS. **Windows SmartScreen will warn** because the build is unsigned:
    on the "Windows protected your PC" screen, click **More info**, then
    **Run anyway**.
-5. Check **Tools** menu for "OBS Setup Test: Quickstart Profile".
+5. Check the **Tools** menu for "OBS Setup Test: Quickstart Profile".
 
 ### macOS
 
-1. Download `obs-quickstart-plugin-0.1.0-alpha1-macos-universal.tar.gz` below.
+1. Download the `-macos-universal.pkg` file below (not the `-dSYMs.tar.xz`,
+   which is debug symbols).
 2. Close OBS.
-3. Extract the archive into `/Applications/OBS.app/Contents/PlugIns`
-   (right-click OBS in Applications → Show Package Contents).
+3. Double-click the `.pkg` to run the installer.
 4. Open OBS. **macOS Gatekeeper may block the unsigned plugin**: if so, open
    **System Settings → Privacy & Security**, scroll to the Security section,
-   and click **Open Anyway** (or **Allow**) next to the blocked plugin
-   message. You may need to do this once per plugin file.
+   and click **Open Anyway** next to the blocked plugin message.
 5. Check the **Tools** menu for "OBS Setup Test: Quickstart Profile".
+6. Do NOT manually copy files into `OBS.app/Contents` — modifying the app
+   bundle can invalidate OBS's signature and trigger a "damaged" warning.
 
 ### Ubuntu
 
-1. Download the `.deb` (or archive) below.
-2. Install per the included instructions, then open OBS and check the
-   **Tools** menu.
+1. Download the `-x86_64.deb` file below.
+2. Close OBS.
+3. Install with: `sudo apt install ./obs-quickstart-plugin-0.1.0-x86_64.deb`
+   (replace the filename with the exact one you downloaded).
+4. Open OBS and check the **Tools** menu.
+5. Note: the `.deb` does not work with Flatpak installations of OBS.
 
 ## If something goes wrong
 
@@ -52,9 +64,8 @@
 - **Plugin doesn't appear / OBS won't start:** in OBS go to
   **Help → Log Files → Upload Current Log File** and send us the link.
 
-## Known limitations (alpha)
+## Build info
 
-- The setup test is a scaffold for exercising the profile module; the full
-  setup wizard UI is not built yet.
+- Built on Windows 11, macOS (universal), Ubuntu 24.04.
+- Manual testing on physical machines has not been completed yet.
 - Builds are unsigned (see the SmartScreen/Gatekeeper notes above).
-- Tested on Windows 11, macOS (Apple Silicon), Ubuntu 24.04.

@@ -211,6 +211,7 @@ private:
   bool rollbackProfileCreation(const std::string &createdProfile);
 
   std::string m_lastBackupPath;
+  std::string m_backupRoot;
   std::string m_previousProfile;
   std::string m_previousSceneCollection;
 };

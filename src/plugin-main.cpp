@@ -48,19 +48,11 @@ static void on_profile_test_menu_item_clicked(void *private_data) {
   QMainWindow *mainWindow =
       static_cast<QMainWindow *>(obs_frontend_get_main_window());
 
-  // Confirmation: the user must opt in before we touch their profiles.
-  const auto confirm = QMessageBox::question(
-      mainWindow, "OBS Setup Test: Quickstart Profile",
-      "This creates a new 'Quickstart' profile and switches to it. Your "
-      "current profile isn't modified.\n\nContinue?",
-      QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel);
-  if (confirm != QMessageBox::Ok)
-    return;
-
   obs_setup::profile::ProfileManager manager;
 
-  // Busy check first, so the dialog can name the active outputs instead of
-  // failing opaquely inside setupQuickstartProfile().
+  // Busy check before the confirm dialog: no point asking the user to opt
+  // in when the test can't run. setupQuickstartProfile() rechecks
+  // internally, so a race between here and there still fails safe.
   const auto active = manager.activeOutputs();
   if (!active.empty()) {
     std::string names;
@@ -77,22 +69,42 @@ static void on_profile_test_menu_item_clicked(void *private_data) {
     return;
   }
 
+  // Confirmation: the user must opt in before we touch their profiles.
+  const auto confirm = QMessageBox::question(
+      mainWindow, "OBS Setup Test: Quickstart Profile",
+      "This creates a new 'Quickstart' profile and switches to it. Your "
+      "current profile isn't modified.\n\nContinue?",
+      QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel);
+  if (confirm != QMessageBox::Ok)
+    return;
+
   std::string profileName;
   if (manager.setupQuickstartProfile(profileName)) {
     // Success: the backup is redundant (the previous profile was never
     // modified), so delete it rather than accumulating stream-key copies.
+    // If deletion fails the backup still holds a stream key, so say so.
     const std::string backupPath = manager.lastBackupPath();
-    manager.deleteLastBackup();
-    obs_log(LOG_INFO,
-            "[PoC] Quickstart profile ready: '%s' (redundant backup "
-            "deleted). Switch back via the Profile menu if needed.",
-            profileName.c_str());
+    QString extra;
+    if (manager.deleteLastBackup()) {
+      obs_log(LOG_INFO,
+              "[PoC] Quickstart profile ready: '%s' (redundant backup "
+              "deleted). Switch back via the Profile menu if needed.",
+              profileName.c_str());
+    } else {
+      obs_log(LOG_WARNING,
+              "[PoC] Quickstart profile ready: '%s', but the redundant "
+              "backup at '%s' could not be deleted; delete it manually.",
+              profileName.c_str(), backupPath.c_str());
+      extra = QString("\n\nNote: the temporary backup at\n%1\ncould not be "
+                      "deleted automatically — please delete it manually.")
+                  .arg(QString::fromStdString(backupPath));
+    }
     QMessageBox::information(
         mainWindow, "OBS Setup Test: Quickstart Profile",
         QString("Quickstart profile '%1' is ready and active.\n\n"
                 "Your previous profile was not modified — switch back any "
-                "time via the Profile menu.")
-            .arg(QString::fromStdString(profileName)));
+                "time via the Profile menu.%2")
+            .arg(QString::fromStdString(profileName), extra));
   } else {
     const std::string backupPath = manager.lastBackupPath();
     const std::string details =
