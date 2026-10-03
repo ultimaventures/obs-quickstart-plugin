@@ -37,8 +37,7 @@
 
 ### macOS
 
-1. Download the `-macos-universal.pkg` file below (not the `-dSYMs.tar.xz`,
-   which is debug symbols).
+1. Download the `-macos-universal.pkg` file below.
 2. Close OBS.
 3. Double-click the `.pkg` to run the installer. **The unsigned installer
    itself may trigger Gatekeeper**: if macOS blocks it, open **System
@@ -52,7 +51,7 @@
 
 ### Ubuntu
 
-1. Download the `-ubuntu-24.04-x86_64.deb` file below.
+1. Download the `-x86_64.deb` file below.
 2. Close OBS.
 3. Install with: `sudo apt install ./obs-quickstart-plugin-0.1.2-x86_64.deb`
    (replace the filename with the exact one in the draft if it differs —
@@ -69,6 +68,6 @@
 
 ## Build info
 
-- Built on Windows 11, macOS (universal), Ubuntu 24.04.
+- Built on Windows (x64), macOS (universal), Ubuntu 24.04.
 - Manual testing on physical machines has not been completed yet.
 - Builds are unsigned (see the SmartScreen/Gatekeeper notes above).

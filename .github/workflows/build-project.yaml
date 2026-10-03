@@ -94,9 +94,18 @@ jobs:
         run: |
           : Sync buildspec.json version from tag 🏷️
           numeric="${GITHUB_REF_NAME%%-*}"
-          jq --arg v "$numeric" '.version = $v' buildspec.json > buildspec.json.tmp \
-            && mv buildspec.json.tmp buildspec.json
-          echo "buildspec.json version -> $(jq -r .version buildspec.json)"
+          if ! printf '%s' "${numeric}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' does not yield a numeric X.Y.Z version" >&2
+            exit 1
+          fi
+          jq --arg v "${numeric}" '.version = $v' buildspec.json > buildspec.json.tmp
+          mv buildspec.json.tmp buildspec.json
+          actual="$(jq -r .version buildspec.json)"
+          if [ "${actual}" != "${numeric}" ]; then
+            echo "::error::buildspec.json version is '${actual}', expected '${numeric}'" >&2
+            exit 1
+          fi
+          echo "buildspec.json version -> ${actual}"
 
       - name: Set Up Environment 🔧
         id: setup
@@ -215,9 +224,18 @@ jobs:
         run: |
           : Sync buildspec.json version from tag 🏷️
           numeric="${GITHUB_REF_NAME%%-*}"
-          jq --arg v "$numeric" '.version = $v' buildspec.json > buildspec.json.tmp \
-            && mv buildspec.json.tmp buildspec.json
-          echo "buildspec.json version -> $(jq -r .version buildspec.json)"
+          if ! printf '%s' "${numeric}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' does not yield a numeric X.Y.Z version" >&2
+            exit 1
+          fi
+          jq --arg v "${numeric}" '.version = $v' buildspec.json > buildspec.json.tmp
+          mv buildspec.json.tmp buildspec.json
+          actual="$(jq -r .version buildspec.json)"
+          if [ "${actual}" != "${numeric}" ]; then
+            echo "::error::buildspec.json version is '${actual}', expected '${numeric}'" >&2
+            exit 1
+          fi
+          echo "buildspec.json version -> ${actual}"
 
       - name: Set Up Environment 🔧
         id: setup
@@ -300,9 +318,18 @@ jobs:
         run: |
           : Sync buildspec.json version from tag 🏷️
           numeric="${GITHUB_REF_NAME%%-*}"
-          jq --arg v "$numeric" '.version = $v' buildspec.json > buildspec.json.tmp \
-            && mv buildspec.json.tmp buildspec.json
-          echo "buildspec.json version -> $(jq -r .version buildspec.json)"
+          if ! printf '%s' "${numeric}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' does not yield a numeric X.Y.Z version" >&2
+            exit 1
+          fi
+          jq --arg v "${numeric}" '.version = $v' buildspec.json > buildspec.json.tmp
+          mv buildspec.json.tmp buildspec.json
+          actual="$(jq -r .version buildspec.json)"
+          if [ "${actual}" != "${numeric}" ]; then
+            echo "::error::buildspec.json version is '${actual}', expected '${numeric}'" >&2
+            exit 1
+          fi
+          echo "buildspec.json version -> ${actual}"
 
       - name: Set Up Environment 🔧
         id: setup
