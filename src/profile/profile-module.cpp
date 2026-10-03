@@ -5,6 +5,7 @@
 #include <ctime>
 #include <filesystem>
 #include <string>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 
@@ -281,6 +282,37 @@ bool ProfileManager::backupExistingProfile() {
   return true;
 }
 
+bool ProfileManager::deleteLastBackup() {
+  if (!checkGuiThread("deleteLastBackup"))
+    return false;
+
+  if (m_lastBackupPath.empty())
+    return true;
+
+  std::error_code ec;
+  const std::filesystem::path backupDir =
+      std::filesystem::u8path(m_lastBackupPath);
+  // Guard: only delete inside the quickstart-backups root, never an
+  // arbitrary path. A corrupted m_lastBackupPath must not become an rm -rf.
+  if (backupDir.parent_path().filename().u8string() != "quickstart-backups") {
+    blog(LOG_ERROR,
+         "[Profile] Refusing to delete backup outside quickstart-backups: "
+         "'%s'",
+         m_lastBackupPath.c_str());
+    return false;
+  }
+  const std::uintmax_t removed = std::filesystem::remove_all(backupDir, ec);
+  if (ec) {
+    blog(LOG_ERROR, "[Profile] Failed to delete backup '%s': %s",
+         m_lastBackupPath.c_str(), ec.message().c_str());
+    return false;
+  }
+  blog(LOG_INFO, "[Profile] Deleted redundant backup '%s' (%llu entries)",
+       m_lastBackupPath.c_str(), static_cast<unsigned long long>(removed));
+  m_lastBackupPath.clear();
+  return true;
+}
+
 std::optional<std::string>
 ProfileManager::createSceneCollection(const std::string &name) {
   if (!checkGuiThread("createSceneCollection"))
@@ -327,10 +359,11 @@ ProfileManager::triggerAutoConfigWizard(const std::string &expectedProfile) {
     return WizardTriggerResult::WrongProfileActive;
   }
 
-  if (isBusy()) {
+  const auto active = activeOutputs();
+  if (!active.empty()) {
     blog(LOG_WARNING,
          "[Profile] Wizard launch refused: output active (%s); stop it first",
-         joinNames(activeOutputs()).c_str());
+         joinNames(active).c_str());
     return WizardTriggerResult::Busy;
   }
 
@@ -481,10 +514,11 @@ bool ProfileManager::setupQuickstartProfile(std::string &outProfileName) {
   if (!checkGuiThread("setupQuickstartProfile"))
     return false;
 
-  if (isBusy()) {
+  const auto active = activeOutputs();
+  if (!active.empty()) {
     blog(LOG_WARNING,
          "[Profile] Setup refused: output active (%s); stop it first",
-         joinNames(activeOutputs()).c_str());
+         joinNames(active).c_str());
     return false;
   }
 
