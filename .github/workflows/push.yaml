@@ -49,12 +49,50 @@ jobs:
               echo 'prerelease=false' >> $GITHUB_OUTPUT
               echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
               ;;
-            +([0-9]).+([0-9]).+([0-9])-@(beta|rc)*([0-9]) )
+            +([0-9]).+([0-9]).+([0-9])-@(alpha|beta|rc)*([0-9]) )
               echo 'validTag=true' >> $GITHUB_OUTPUT
               echo 'prerelease=true' >> $GITHUB_OUTPUT
               echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
               ;;
             *) echo 'validTag=false' >> $GITHUB_OUTPUT ;;
+          esac
+
+      - name: Reject Invalid Tag 🛑
+        # A mistagged push (e.g. v0.1.0-alpha1 with a 'v' prefix) must fail
+        # loudly, not go green with no release. Valid tags are 0.1.0 or
+        # 0.1.0-alpha1 (no 'v' prefix); see the case patterns above.
+        if: github.ref_type == 'tag' && !fromJSON(steps.check.outputs.validTag)
+        run: |
+          echo "error: tag '${GITHUB_REF_NAME}' is not a valid release tag." >&2
+          echo "Use 0.1.0 for stable or 0.1.0-alpha1 / 0.1.0-beta1 / 0.1.0-rc1 for prereleases (no 'v' prefix)." >&2
+          exit 1
+
+      - name: Checkout for Guard 🛒
+        # The stable-release guard greps src/, so the tree must be present.
+        if: fromJSON(steps.check.outputs.validTag) && !fromJSON(steps.check.outputs.prerelease)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Guard Stable Release Hooks 🛡️
+        # The "OBS Setup Test" menu hooks are tester scaffolding: they may
+        # ship in prerelease (alpha/beta/rc) tags, but must never reach a
+        # stable release. Fail closed on stable tags.
+        if: fromJSON(steps.check.outputs.validTag) && !fromJSON(steps.check.outputs.prerelease)
+        run: |
+          : Guard Stable Release Hooks 🛡️
+          # Defense in depth: if the checkout above is ever removed, the
+          # guard must fail rather than silently pass on a missing src/.
+          # Note: this job uses bash -e, so capture grep's exit code
+          # explicitly — a bare grep returning 1 (no match) would abort
+          # the script before the case runs.
+          test -d src || { echo "error: src/ missing; refusing to pass the guard" >&2; exit 1; }
+          rc=0
+          grep -r "OBS Setup Test" src/ --include="*.cpp" --include="*.hpp" || rc=$?
+          case $rc in
+            0) echo "error: 'OBS Setup Test' hook found in src/ on a stable tag; remove it before releasing" >&2; exit 1 ;;
+            1) echo "No test hooks in src/; stable release guard passed." ;;
+            *) echo "error: grep failed; refusing to pass the guard" >&2; exit 1 ;;
           esac
 
       - name: Download Build Artifacts 📥
@@ -140,7 +178,8 @@ jobs:
           : Post commit status to GitLab
           if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
           python3 - <<'PYEOF'
-          import json, os, sys, urllib.parse, urllib.request
+          import json, os, sys, time, urllib.parse, urllib.request
+          import urllib.error
 
           run_id = os.environ["GITHUB_RUN_ID"]
           repo = os.environ["GITHUB_REPOSITORY"]
@@ -153,14 +192,61 @@ jobs:
               sys.exit("error: GITLAB_STATUS_TOKEN secret is not set; "
                        "refusing to leave the gate status unresolved")
 
+          def fetch_json(req, tries=3):
+              """GET with timeout and retry on timeout/5xx (fail-closed)."""
+              last_exc = None
+              for attempt in range(tries):
+                  try:
+                      with urllib.request.urlopen(req, timeout=30) as resp:
+                          if resp.status >= 500:
+                              raise urllib.error.HTTPError(
+                                  req.full_url, resp.status, "server error",
+                                  resp.headers, None)
+                          return json.load(resp)
+                  except (urllib.error.URLError, TimeoutError,
+                          urllib.error.HTTPError) as exc:
+                      last_exc = exc
+                      # Retry only on timeout or 5xx; 4xx is fail-closed.
+                      status = getattr(exc, "code", None)
+                      if status is not None and status < 500:
+                          raise
+                      if attempt < tries - 1:
+                          time.sleep(2 ** attempt)
+              raise last_exc
+
+          def post_status(payload, tries=3):
+              """POST with timeout and retry on timeout/5xx (fail-closed)."""
+              last_exc = None
+              for attempt in range(tries):
+                  try:
+                      req = urllib.request.Request(
+                          "https://gitlab.com/api/v4/projects/79480971/statuses/" + sha,
+                          data=payload, headers={"PRIVATE-TOKEN": gl_token})
+                      with urllib.request.urlopen(req, timeout=30) as resp:
+                          if resp.status >= 500:
+                              raise urllib.error.HTTPError(
+                                  req.full_url, resp.status, "server error",
+                                  resp.headers, None)
+                          return json.load(resp)
+                  except (urllib.error.URLError, TimeoutError,
+                          urllib.error.HTTPError) as exc:
+                      last_exc = exc
+                      status = getattr(exc, "code", None)
+                      if status is not None and status < 500:
+                          raise
+                      if attempt < tries - 1:
+                          time.sleep(2 ** attempt)
+              raise last_exc
+
           req = urllib.request.Request(
               f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100",
               headers={"Authorization": f"Bearer {gh_token}",
                        "Accept": "application/vnd.github+json",
                        "X-GitHub-Api-Version": "2022-11-28"})
-          jobs = json.load(urllib.request.urlopen(req))["jobs"]
+          jobs = fetch_json(req)["jobs"]
 
           failed, cancelled = [], []
+          os_results = {}
           for job in jobs:
               conclusion = job.get("conclusion")
               if not conclusion:
@@ -170,13 +256,34 @@ jobs:
                   failed.append(name)
               elif conclusion in ("cancelled", "stale"):
                   cancelled.append(name)
+              # Track per-OS build results explicitly; a skipped or missing
+              # OS build must not be reported as a passing gate. Collect
+              # every matching job — all must succeed, not just the last.
+              for os_name in ("Build for Windows", "Build for macOS",
+                              "Build for Ubuntu"):
+                  if os_name in name:
+                      os_results.setdefault(os_name, []).append(conclusion)
 
           if failed:
               state, description = "failed", "Failed: " + ", ".join(failed)
           elif cancelled:
               state, description = "canceled", "Cancelled: " + ", ".join(cancelled)
           else:
-              state, description = "success", "All 3 OS builds and checks passed"
+              # Vacuous-success guard: every OS build must have an explicit
+              # success; a skipped or absent build fails the gate instead of
+              # being reported as green.
+              missing = [os_name for os_name in
+                         ("Build for Windows", "Build for macOS",
+                          "Build for Ubuntu")
+                         if not os_results.get(os_name)
+                         or any(c != "success"
+                                for c in os_results[os_name])]
+              if missing:
+                  state = "failed"
+                  description = ("Failed: missing or unsuccessful OS build(s): "
+                                 + ", ".join(missing))
+              else:
+                  state, description = "success", "All 3 OS builds and checks passed"
           description = description[:250]
 
           # The status `name` MUST match the pending post in .gitlab-ci.yml.
@@ -187,10 +294,6 @@ jobs:
               "description": description,
           }).encode()
 
-          req = urllib.request.Request(
-              "https://gitlab.com/api/v4/projects/79480971/statuses/" + sha,
-              data=payload, headers={"PRIVATE-TOKEN": gl_token})
-          with urllib.request.urlopen(req) as resp:
-              body = json.load(resp)
+          body = post_status(payload)
           print(f"posted gate status '{body['status']}' for {sha[:9]}: {description}")
           PYEOF

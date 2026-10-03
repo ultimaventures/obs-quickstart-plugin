@@ -115,6 +115,19 @@ public:
   std::string lastBackupPath() const { return m_lastBackupPath; }
 
   /**
+   * @brief Deletes the most recent backup directory, if one exists.
+   *
+   * Used after terminal success: the backup is redundant because the
+   * previous profile was never modified, so keeping it would only
+   * accumulate copies of the stream key. On failure the backup is kept
+   * as a safety net (callers should surface lastBackupPath() instead).
+   * Clears lastBackupPath() on success. All callers run on the GUI thread.
+   *
+   * @return True when there was nothing to delete or the deletion completed.
+   */
+  bool deleteLastBackup();
+
+  /**
    * @brief Returns a variant of `base` free among existing profile names.
    * @return A free profile name, or an empty string if none was found.
    */
@@ -198,6 +211,7 @@ private:
   bool rollbackProfileCreation(const std::string &createdProfile);
 
   std::string m_lastBackupPath;
+  std::string m_backupRoot;
   std::string m_previousProfile;
   std::string m_previousSceneCollection;
 };
