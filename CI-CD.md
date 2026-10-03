@@ -185,6 +185,18 @@ Decisions (2026-09-28):
     merge to `main`, and every merge is therefore maintainer-approved by
     construction. Required-approvals rules are Premium-only, which is moot
     for a single-maintainer project.
+  - **Statuses are per-SHA:** a commit status belongs to its exact SHA, not
+    the branch. A green `ci/*` run of the identical SHA satisfies a later
+    `ready/*` gate on that SHA — same SHA means the same tree, so the
+    result carries over and no rebuild is needed. A failed status blocks
+    until a re-run resolves it (GitLab permits failed → success on
+    re-run); it does not stay blocked forever.
+  - **Skip-if-exists (verified 2026-10-01):** the GitLab pending-post job
+    checks for an existing `github/3os-build` status before posting
+    `pending`, so a retried job cannot clobber a `success` back to
+    `pending`. This requires the status token to have Repository > Commit >
+    Read (the "Commit status" scope is create-only); without it the GET
+    silently returns nothing and the guard is dead code.
   - **Least-privilege status credential (review 2026-09-29, verified
     2026-09-30):** posting commit statuses needs an `api`-scope token, and
     any pusher can write a workflow that reads whatever secret the workflow
