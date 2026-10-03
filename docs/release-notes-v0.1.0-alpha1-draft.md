@@ -40,20 +40,23 @@
 1. Download the `-macos-universal.pkg` file below (not the `-dSYMs.tar.xz`,
    which is debug symbols).
 2. Close OBS.
-3. Double-click the `.pkg` to run the installer.
-4. Open OBS. **macOS Gatekeeper may block the unsigned plugin**: if so, open
-   **System Settings → Privacy & Security**, scroll to the Security section,
-   and click **Open Anyway** next to the blocked plugin message.
+3. Double-click the `.pkg` to run the installer. **The unsigned installer
+   itself may trigger Gatekeeper**: if macOS blocks it, open **System
+   Settings → Privacy & Security** and click **Open Anyway**.
+4. Open OBS. If Gatekeeper blocks the plugin at OBS launch, return to
+   **System Settings → Privacy & Security** and click **Open Anyway**
+   next to the plugin message.
 5. Check the **Tools** menu for "OBS Setup Test: Quickstart Profile".
 6. Do NOT manually copy files into `OBS.app/Contents` — modifying the app
    bundle can invalidate OBS's signature and trigger a "damaged" warning.
 
 ### Ubuntu
 
-1. Download the `-x86_64.deb` file below.
+1. Download the `-ubuntu-24.04-x86_64.deb` file below.
 2. Close OBS.
-3. Install with: `sudo apt install ./obs-quickstart-plugin-0.1.0-x86_64.deb`
-   (replace the filename with the exact one you downloaded).
+3. Install with: `sudo apt install ./obs-quickstart-plugin-0.1.0-ubuntu-24.04-x86_64-<hash>.deb`
+   (replace the filename with the exact one you downloaded — the trailing
+   hash varies per build).
 4. Open OBS and check the **Tools** menu.
 5. Note: the `.deb` does not work with Flatpak installations of OBS.
 

@@ -295,7 +295,10 @@ bool ProfileManager::deleteLastBackup() {
       std::filesystem::u8path(m_lastBackupPath);
   // Guard: the backup must sit directly inside the exact root recorded at
   // backup time. A corrupted m_lastBackupPath must not become an rm -rf.
-  if (m_backupRoot.empty() ||
+  // Also reject "." / ".." final components: "root/.." would pass the
+  // parent check but remove_all would delete root's parent.
+  const std::string finalComponent = backupDir.filename().u8string();
+  if (m_backupRoot.empty() || finalComponent == "." || finalComponent == ".." ||
       backupDir.parent_path().u8string() != m_backupRoot) {
     blog(LOG_ERROR,
          "[Profile] Refusing to delete backup outside the recorded root: "
