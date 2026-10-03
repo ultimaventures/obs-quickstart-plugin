@@ -1,4 +1,4 @@
-# 0.1.0-alpha1 — Tester Pre-release (DRAFT)
+# 0.1.2-alpha1 — Tester Pre-release (DRAFT)
 
 > **This is an alpha for testers only — not ready for public use.**
 > The plugin is under active development. Expect rough edges.
@@ -54,9 +54,9 @@
 
 1. Download the `-ubuntu-24.04-x86_64.deb` file below.
 2. Close OBS.
-3. Install with: `sudo apt install ./obs-quickstart-plugin-0.1.0-ubuntu-24.04-x86_64-<hash>.deb`
-   (replace the filename with the exact one you downloaded — the trailing
-   hash varies per build).
+3. Install with: `sudo apt install ./obs-quickstart-plugin-0.1.2-x86_64.deb`
+   (replace the filename with the exact one in the draft if it differs —
+   verify against the actual draft assets before publishing).
 4. Open OBS and check the **Tools** menu.
 5. Note: the `.deb` does not work with Flatpak installations of OBS.
 
