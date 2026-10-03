@@ -84,6 +84,29 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Sync buildspec version from tag 🏷️
+        # The tag is the single source of truth for the release version.
+        # CMake's project(VERSION) requires numeric X.Y.Z, so strip any
+        # prerelease suffix (-alpha1, -beta2, -rc1); the prerelease nature
+        # is carried by the tag and the GitHub release flags.
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          : Sync buildspec.json version from tag 🏷️
+          numeric="${GITHUB_REF_NAME%%-*}"
+          if ! printf '%s' "${numeric}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' does not yield a numeric X.Y.Z version" >&2
+            exit 1
+          fi
+          jq --arg v "${numeric}" '.version = $v' buildspec.json > buildspec.json.tmp
+          mv buildspec.json.tmp buildspec.json
+          actual="$(jq -r .version buildspec.json)"
+          if [ "${actual}" != "${numeric}" ]; then
+            echo "::error::buildspec.json version is '${actual}', expected '${numeric}'" >&2
+            exit 1
+          fi
+          echo "buildspec.json version -> ${actual}"
+
       - name: Set Up Environment 🔧
         id: setup
         run: |
@@ -191,6 +214,29 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Sync buildspec version from tag 🏷️
+        # The tag is the single source of truth for the release version.
+        # CMake's project(VERSION) requires numeric X.Y.Z, so strip any
+        # prerelease suffix (-alpha1, -beta2, -rc1); the prerelease nature
+        # is carried by the tag and the GitHub release flags.
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          : Sync buildspec.json version from tag 🏷️
+          numeric="${GITHUB_REF_NAME%%-*}"
+          if ! printf '%s' "${numeric}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' does not yield a numeric X.Y.Z version" >&2
+            exit 1
+          fi
+          jq --arg v "${numeric}" '.version = $v' buildspec.json > buildspec.json.tmp
+          mv buildspec.json.tmp buildspec.json
+          actual="$(jq -r .version buildspec.json)"
+          if [ "${actual}" != "${numeric}" ]; then
+            echo "::error::buildspec.json version is '${actual}', expected '${numeric}'" >&2
+            exit 1
+          fi
+          echo "buildspec.json version -> ${actual}"
+
       - name: Set Up Environment 🔧
         id: setup
         run: |
@@ -261,6 +307,29 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - name: Sync buildspec version from tag 🏷️
+        # The tag is the single source of truth for the release version.
+        # CMake's project(VERSION) requires numeric X.Y.Z, so strip any
+        # prerelease suffix (-alpha1, -beta2, -rc1); the prerelease nature
+        # is carried by the tag and the GitHub release flags.
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          : Sync buildspec.json version from tag 🏷️
+          numeric="${GITHUB_REF_NAME%%-*}"
+          if ! printf '%s' "${numeric}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' does not yield a numeric X.Y.Z version" >&2
+            exit 1
+          fi
+          jq --arg v "${numeric}" '.version = $v' buildspec.json > buildspec.json.tmp
+          mv buildspec.json.tmp buildspec.json
+          actual="$(jq -r .version buildspec.json)"
+          if [ "${actual}" != "${numeric}" ]; then
+            echo "::error::buildspec.json version is '${actual}', expected '${numeric}'" >&2
+            exit 1
+          fi
+          echo "buildspec.json version -> ${actual}"
 
       - name: Set Up Environment 🔧
         id: setup
