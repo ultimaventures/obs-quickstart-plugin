@@ -83,9 +83,13 @@ jobs:
           : Guard Stable Release Hooks 🛡️
           # Defense in depth: if the checkout above is ever removed, the
           # guard must fail rather than silently pass on a missing src/.
+          # Note: this job uses bash -e, so capture grep's exit code
+          # explicitly — a bare grep returning 1 (no match) would abort
+          # the script before the case runs.
           test -d src || { echo "error: src/ missing; refusing to pass the guard" >&2; exit 1; }
-          grep -r "OBS Setup Test" src/ --include="*.cpp" --include="*.hpp"
-          case $? in
+          rc=0
+          grep -r "OBS Setup Test" src/ --include="*.cpp" --include="*.hpp" || rc=$?
+          case $rc in
             0) echo "error: 'OBS Setup Test' hook found in src/ on a stable tag; remove it before releasing" >&2; exit 1 ;;
             1) echo "No test hooks in src/; stable release guard passed." ;;
             *) echo "error: grep failed; refusing to pass the guard" >&2; exit 1 ;;
