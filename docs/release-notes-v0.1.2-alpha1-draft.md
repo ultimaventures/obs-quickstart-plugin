@@ -26,13 +26,12 @@
 
 1. Download the `-windows-x64.zip` file below.
 2. Close OBS.
-3. Extract the zip into your OBS installation folder (the `obs-plugins`
-   directory should merge with the existing one). If you extract to
-   `C:\Program Files`, Windows may prompt for administrator permission
-   (UAC) — this is normal.
-4. Open OBS. **Windows SmartScreen will warn** because the build is unsigned:
-   on the "Windows protected your PC" screen, click **More info**, then
-   **Run anyway**.
+3. Press **Win+R**, type `%APPDATA%\obs-studio\plugins`, and press Enter.
+   Extract the zip there, so you end up with
+   `...\plugins\obs-quickstart-plugin\bin\64bit\obs-quickstart-plugin.dll`.
+   (This is OBS's per-user plugin folder — do NOT extract into
+   `C:\Program Files\obs-studio`; OBS won't find it there.)
+4. Open OBS.
 5. Check the **Tools** menu for "OBS Setup Test: Quickstart Profile".
 
 ### macOS
@@ -51,9 +50,9 @@
 
 ### Ubuntu
 
-1. Download the `-x86_64.deb` file below.
+1. Download the `-x86_64-linux-gnu.deb` file below.
 2. Close OBS.
-3. Install with: `sudo apt install ./obs-quickstart-plugin-0.1.2-x86_64.deb`
+3. Install with: `sudo apt install ./obs-quickstart-plugin-0.1.2-x86_64-linux-gnu.deb`
    (replace the filename with the exact one in the draft if it differs —
    verify against the actual draft assets before publishing).
 4. Open OBS and check the **Tools** menu.
@@ -65,6 +64,37 @@
   send us the text.
 - **Plugin doesn't appear / OBS won't start:** in OBS go to
   **Help → Log Files → Upload Current Log File** and send us the link.
+
+## After the test
+
+1. **Tell us how it went.** Reply with your OS, whether the test succeeded,
+   and — if it failed — the text from the "Copy details" button.
+2. **Switch back to your own profile:** in OBS, open the **Profile** menu
+   and select your original profile. (The success dialog reminds you too.)
+3. **Clean up (optional):** to remove the test profile, select it in the
+   **Profile** menu, then choose **Profile → Remove**. Your original
+   profile was never modified.
+
+## Uninstalling the plugin
+
+If you don't want to keep the plugin around after testing:
+
+### Windows
+
+1. Close OBS.
+2. Press **Win+R**, type `%APPDATA%\obs-studio\plugins`, and press Enter.
+3. Delete the `obs-quickstart-plugin` folder.
+
+### macOS
+
+1. Close OBS.
+2. In Terminal, run:
+   `rm -rf ~/Library/Application\ Support/obs-studio/plugins/obs-quickstart-plugin.plugin`
+
+### Ubuntu
+
+1. Close OBS.
+2. Run: `sudo apt remove obs-quickstart-plugin`
 
 ## Build info
 
