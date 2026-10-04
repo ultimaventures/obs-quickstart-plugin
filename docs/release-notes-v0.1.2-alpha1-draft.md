@@ -6,6 +6,25 @@
 > When publishing: paste these notes **above** the checksums block in the
 > release body (the workflow appends checksums automatically).
 
+## ⚠️ Before you test
+
+This is an alpha. The test backs up your current OBS profile automatically,
+but as an extra precaution we recommend one of the following:
+
+**Option A — Back up OBS completely (5 minutes):**
+- **Windows:** Press Win+R, type `%APPDATA%\obs-studio`, press Enter.
+  Copy the `obs-studio` folder to your Desktop or a USB drive.
+- **macOS:** In Finder, choose Go → Go to Folder, type
+  `~/Library/Application Support/obs-studio`, press Enter. Copy the
+  `obs-studio` folder somewhere safe.
+- **Ubuntu:** Run: `cp -r ~/.config/obs-studio ~/obs-studio-backup`
+
+  To restore: close OBS, delete the current folder, and copy your backup
+  back to its original location.
+
+**Option B — Use a secondary computer** for testing, so your main
+streaming setup is never touched.
+
 ## What this build does
 
 - Adds a **Tools → OBS Setup Test: Quickstart Profile** menu item that backs
