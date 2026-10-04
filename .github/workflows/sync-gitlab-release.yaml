@@ -1,0 +1,60 @@
+name: Sync GitLab Release 🔗
+run-name: Sync GitLab release for ${{ github.event.release.tag_name }} 🔗
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+jobs:
+  sync-gitlab-release:
+    name: Sync GitLab Release 🔗
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Upsert GitLab release 🔗
+        # The tag is the source of truth on the GitLab side too: the GitLab
+        # release for this tag gets a pointer to the GitHub release where
+        # the built assets live. Runs only when a draft is published, so
+        # the GitHub URL is final.
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_RELEASE_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+        run: |
+          : Sync GitLab release with GitHub release URL 🔗
+          set -euo pipefail
+          if [ -z "${GITLAB_TOKEN}" ]; then
+            echo "::error::GITLAB_RELEASE_TOKEN secret is not set" >&2
+            exit 1
+          fi
+          api="https://gitlab.com/api/v4/projects/79480971/releases"
+          description="Builds for this release are published on GitHub (unsigned, see the notes there for SmartScreen/Gatekeeper steps):
+
+          [${RELEASE_NAME}](${RELEASE_URL})"
+          payload="$(jq -n --arg tag "${TAG}" --arg desc "${description}" \
+            '{tag_name: $tag, description: $desc}')"
+          # Try to update an existing GitLab release; create it if missing.
+          code="$(curl -sS -o /tmp/gitlab_release.json -w '%{http_code}' \
+            --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --request PUT --data "${payload}" \
+            "${api}/${TAG}")"
+          if [ "${code}" = "404" ]; then
+            payload="$(jq -n --arg tag "${TAG}" --arg name "${RELEASE_NAME}" \
+              --arg desc "${description}" \
+              '{name: $name, tag_name: $tag, description: $desc}')"
+            code="$(curl -sS -o /tmp/gitlab_release.json -w '%{http_code}' \
+              --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+              --header "Content-Type: application/json" \
+              --request POST --data "${payload}" \
+              "${api}")"
+          fi
+          if [ "${code}" != "200" ] && [ "${code}" != "201" ]; then
+            echo "::error::GitLab API returned HTTP ${code}" >&2
+            cat /tmp/gitlab_release.json >&2
+            exit 1
+          fi
+          echo "GitLab release for '${TAG}' now points at ${RELEASE_URL}"
