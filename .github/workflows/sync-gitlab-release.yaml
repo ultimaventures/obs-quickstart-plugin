@@ -42,29 +42,14 @@ jobs:
             echo "::error::GITLAB_RELEASE_TOKEN secret is not set" >&2
             exit 1
           fi
-          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}")"
-          RELEASE_URL="$(printf '%s' "${release_json}" | jq -r .html_url)"
-          RELEASE_NAME="$(printf '%s' "${release_json}" | jq -r .name)"
-          RELEASE_BODY="$(printf '%s' "${release_json}" | jq -r '.body // ""')"
           api="https://gitlab.com/api/v4/projects/79480971/releases"
-          # The GitLab release carries the GitHub release notes (single
-          # source of truth) plus a download pointer. Falls back to the
-          # pointer alone when the GitHub release has no body.
-          footer="
-
-          ---
-          📦 Builds are published on GitHub (unsigned — see the notes above for SmartScreen/Gatekeeper steps):
-
-          [${RELEASE_NAME}](${RELEASE_URL})"
-          if [ -n "${RELEASE_BODY}" ]; then
-            description="${RELEASE_BODY}${footer}"
-          else
-            description="Builds for this release are published on GitHub (unsigned, see the notes there for SmartScreen/Gatekeeper steps):
-
-          [${RELEASE_NAME}](${RELEASE_URL})"
-          fi
+          # GitLab release is a static pointer to GitHub (single source of
+          # truth for notes and builds). Never copies the GitHub body, so
+          # the `edited` trigger is unnecessary.
+          RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          description="Builds are published on GitHub (unsigned — see the notes there for SmartScreen/Gatekeeper steps): [${TAG}](${RELEASE_URL})"
           # Create first: 201 means created.
-          payload="$(jq -n --arg tag "${TAG}" --arg name "${RELEASE_NAME}" \
+          payload="$(jq -n --arg tag "${TAG}" --arg name "${TAG}" \
             --arg desc "${description}" \
             '{name: $name, tag_name: $tag, description: $desc}')"
           code="$(curl -sS -o /tmp/gitlab_release.json -w '%{http_code}' \
