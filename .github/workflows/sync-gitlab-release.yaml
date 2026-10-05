@@ -22,16 +22,21 @@ jobs:
     steps:
       - name: Upsert GitLab release 🔗
         # The tag is the source of truth on the GitLab side too: the GitLab
-        # release for this tag gets a pointer to the GitHub release where
-        # the built assets live. Runs when a draft is published (or manually
-        # via workflow_dispatch for testing/backfilling), so the GitHub URL
-        # is final.
+        # release for this tag gets the GitHub release notes plus a pointer
+        # to the GitHub release where the built assets live. Runs when a
+        # draft is published (or manually via workflow_dispatch for
+        # testing/backfilling), so the GitHub URL is final.
+        #
+        # POST-first ordering is load-bearing: GitLab returns a generic 403
+        # (not 404) on PUT for a release that does not exist yet, so
+        # PUT-first can never create. POST returns 201 on creation; if the
+        # release already exists (400), fall back to PUT (update).
         env:
           GITLAB_TOKEN: ${{ secrets.GITLAB_RELEASE_TOKEN }}
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag_name }}
         run: |
-          : Sync GitLab release with GitHub release URL 🔗
+          : Sync GitLab release with GitHub release notes and URL 🔗
           set -euo pipefail
           if [ -z "${GITLAB_TOKEN}" ]; then
             echo "::error::GITLAB_RELEASE_TOKEN secret is not set" >&2
@@ -40,27 +45,42 @@ jobs:
           release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}")"
           RELEASE_URL="$(printf '%s' "${release_json}" | jq -r .html_url)"
           RELEASE_NAME="$(printf '%s' "${release_json}" | jq -r .name)"
+          RELEASE_BODY="$(printf '%s' "${release_json}" | jq -r '.body // ""')"
           api="https://gitlab.com/api/v4/projects/79480971/releases"
-          description="Builds for this release are published on GitHub (unsigned, see the notes there for SmartScreen/Gatekeeper steps):
+          # The GitLab release carries the GitHub release notes (single
+          # source of truth) plus a download pointer. Falls back to the
+          # pointer alone when the GitHub release has no body.
+          footer="
+
+          ---
+          📦 Builds are published on GitHub (unsigned — see the notes above for SmartScreen/Gatekeeper steps):
 
           [${RELEASE_NAME}](${RELEASE_URL})"
-          payload="$(jq -n --arg tag "${TAG}" --arg desc "${description}" \
-            '{tag_name: $tag, description: $desc}')"
-          # Try to update an existing GitLab release; create it if missing.
+          if [ -n "${RELEASE_BODY}" ]; then
+            description="${RELEASE_BODY}${footer}"
+          else
+            description="Builds for this release are published on GitHub (unsigned, see the notes there for SmartScreen/Gatekeeper steps):
+
+          [${RELEASE_NAME}](${RELEASE_URL})"
+          fi
+          # Create first: 201 means created.
+          payload="$(jq -n --arg tag "${TAG}" --arg name "${RELEASE_NAME}" \
+            --arg desc "${description}" \
+            '{name: $name, tag_name: $tag, description: $desc}')"
           code="$(curl -sS -o /tmp/gitlab_release.json -w '%{http_code}' \
             --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
             --header "Content-Type: application/json" \
-            --request PUT --data "${payload}" \
-            "${api}/${TAG}")"
-          if [ "${code}" = "404" ]; then
-            payload="$(jq -n --arg tag "${TAG}" --arg name "${RELEASE_NAME}" \
-              --arg desc "${description}" \
-              '{name: $name, tag_name: $tag, description: $desc}')"
+            --request POST --data "${payload}" \
+            "${api}")"
+          if [ "${code}" = "400" ] && grep -q -i "already" /tmp/gitlab_release.json; then
+            # Release already exists — update it instead.
+            payload="$(jq -n --arg tag "${TAG}" --arg desc "${description}" \
+              '{tag_name: $tag, description: $desc}')"
             code="$(curl -sS -o /tmp/gitlab_release.json -w '%{http_code}' \
               --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
               --header "Content-Type: application/json" \
-              --request POST --data "${payload}" \
-              "${api}")"
+              --request PUT --data "${payload}" \
+              "${api}/${TAG}")"
           fi
           if [ "${code}" != "200" ] && [ "${code}" != "201" ]; then
             echo "::error::GitLab API returned HTTP ${code}" >&2
