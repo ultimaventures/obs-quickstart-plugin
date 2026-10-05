@@ -30,7 +30,7 @@ jobs:
         # POST-first ordering is load-bearing: GitLab returns a generic 403
         # (not 404) on PUT for a release that does not exist yet, so
         # PUT-first can never create. POST returns 201 on creation; if the
-        # release already exists (400), fall back to PUT (update).
+        # release already exists (400 or 409), fall back to PUT (update).
         env:
           GITLAB_TOKEN: ${{ secrets.GITLAB_RELEASE_TOKEN }}
           GH_TOKEN: ${{ github.token }}
@@ -72,7 +72,7 @@ jobs:
             --header "Content-Type: application/json" \
             --request POST --data "${payload}" \
             "${api}")"
-          if [ "${code}" = "400" ] && grep -q -i "already" /tmp/gitlab_release.json; then
+          if { [ "${code}" = "400" ] || [ "${code}" = "409" ]; } && grep -q -i "already" /tmp/gitlab_release.json; then
             # Release already exists — update it instead.
             payload="$(jq -n --arg tag "${TAG}" --arg desc "${description}" \
               '{tag_name: $tag, description: $desc}')"
