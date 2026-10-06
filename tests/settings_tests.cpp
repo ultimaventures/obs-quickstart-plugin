@@ -222,7 +222,7 @@ TEST_F(SettingsTest, ApplyEncoderPresetNvenc) {
       "obs_nvenc_h264_tex";
   settings::SettingsManager mgr;
   mgr.applyEncoderPreset("p5");
-  EXPECT_EQ(g_fakeConfig.strings[{"SimpleOutput", "NVENCPreset2"}], "p5");
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "NVENCPreset2"})], "p5");
   EXPECT_TRUE(g_fakeConfig.saveCalled);
 }
 
@@ -230,7 +230,7 @@ TEST_F(SettingsTest, ApplyEncoderPresetX264) {
   g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "obs_x264";
   settings::SettingsManager mgr;
   mgr.applyEncoderPreset("veryfast");
-  EXPECT_EQ(g_fakeConfig.strings[{"SimpleOutput", "Preset"}], "veryfast");
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "Preset"})], "veryfast");
   EXPECT_TRUE(g_fakeConfig.saveCalled);
 }
 
@@ -247,18 +247,18 @@ TEST_F(SettingsTest, ApplyEncoderPresetUnknownEncoderSkipped) {
 TEST_F(SettingsTest, ApplyAudioSettings) {
   settings::SettingsManager mgr;
   mgr.applyAudioSettings();
-  EXPECT_EQ(g_fakeConfig.uints[{"Audio", "SampleRate"}], 48000u);
-  EXPECT_EQ(g_fakeConfig.strings[{"Audio", "ChannelSetup"}], "Stereo");
+  EXPECT_EQ((g_fakeConfig.uints[{"Audio", "SampleRate"}]), 48000u);
+  EXPECT_EQ((g_fakeConfig.strings[{"Audio", "ChannelSetup"})], "Stereo");
   EXPECT_TRUE(g_fakeConfig.saveCalled);
 }
 
 TEST_F(SettingsTest, ApplyRecordingSettings) {
   settings::SettingsManager mgr;
   mgr.applyRecordingSettings();
-  EXPECT_EQ(g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}],
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}],
             "Indistinguishable");
-  EXPECT_EQ(g_fakeConfig.strings[{"SimpleOutput", "RecFormat"}], "mkv");
-  EXPECT_TRUE(g_fakeConfig.bools[{"SimpleOutput", "RecRemux"}]);
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecFormat"})], "mkv");
+  EXPECT_TRUE((g_fakeConfig.bools[{"SimpleOutput", "RecRemux"})]);
   EXPECT_TRUE(g_fakeConfig.saveCalled);
 }
 
@@ -324,9 +324,9 @@ TEST_F(SettingsTest, MigrateSuccessNvenc) {
   EXPECT_EQ(mgr.migrateToAdvancedMode(), settings::MigrateResult::Success);
   EXPECT_TRUE(mgr.needsRecordingModal());
   // Encoder id migrated to AdvOut.
-  EXPECT_EQ(g_fakeConfig.strings[{"AdvOut", "Encoder"}], "obs_nvenc_h264_tex");
+  EXPECT_EQ((g_fakeConfig.strings[{"AdvOut", "Encoder"})], "obs_nvenc_h264_tex");
   // Mode is Advanced only after staging; save persisted everything.
-  EXPECT_EQ(g_fakeConfig.strings[{"Output", "Mode"}], "Advanced");
+  EXPECT_EQ((g_fakeConfig.strings[{"Output", "Mode"})], "Advanced");
   EXPECT_TRUE(g_fakeConfig.saveCalled);
   // streamEncoder.json holds the 1:1 preset and bitrate.
   const fs::path jsonPath = sandbox_ / "streamEncoder.json";
@@ -345,7 +345,7 @@ TEST_F(SettingsTest, MigrateSuccessX264) {
   settings::SettingsManager mgr;
   EXPECT_EQ(mgr.migrateToAdvancedMode(), settings::MigrateResult::Success);
   EXPECT_TRUE(mgr.needsRecordingModal());
-  EXPECT_EQ(g_fakeConfig.strings[{"AdvOut", "Encoder"}], "obs_x264");
+  EXPECT_EQ((g_fakeConfig.strings[{"AdvOut", "Encoder"})], "obs_x264");
   const std::string content = readFile(sandbox_ / "streamEncoder.json");
   EXPECT_NE(content.find("veryfast"), std::string::npos);
   EXPECT_NE(content.find("8000"), std::string::npos);
