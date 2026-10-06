@@ -61,8 +61,10 @@ config_t *obs_frontend_get_profile_config(void) {
   return reinterpret_cast<config_t *>(&g_fakeConfig);
 }
 
-const char *obs_frontend_get_current_profile_path(void) {
-  return g_profilePath.c_str();
+char *obs_frontend_get_current_profile_path(void) {
+  // Real signature returns char* (bfree'd by callers); the module under test
+  // copies it immediately and never frees, so const_cast is safe here.
+  return const_cast<char *>(g_profilePath.c_str());
 }
 
 const char *config_get_string(config_t *config, const char *section,
@@ -100,9 +102,9 @@ void config_set_bool(config_t *config, const char *section, const char *name,
   fake->bools[std::make_pair(std::string(section), std::string(name))] = value;
 }
 
-bool config_save(config_t *config) {
+int config_save(config_t *config) {
   reinterpret_cast<FakeConfig *>(config)->saveCalled = true;
-  return true;
+  return CONFIG_SUCCESS;
 }
 
 // Known encoder ids for the migrate validation. Unknown ids return null,
@@ -258,7 +260,7 @@ TEST_F(SettingsTest, ApplyRecordingSettings) {
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]),
             "Indistinguishable");
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecFormat"}]), "mkv");
-  EXPECT_TRUE((g_fakeConfig.bools[{"SimpleOutput", "RecRemux"}])]);
+  EXPECT_TRUE((g_fakeConfig.bools[{"SimpleOutput", "RecRemux"}]));
   EXPECT_TRUE(g_fakeConfig.saveCalled);
 }
 
