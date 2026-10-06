@@ -42,18 +42,26 @@ target_link_libraries(
 include(GoogleTest)
 
 # Windows: the test executables are run at build time by gtest_discover_tests
-# and later by ctest, but dependency DLLs (Qt, libobs, obs-frontend-api) are
-# not on the loader PATH in CI, so the executable dies with 0xc0000135
-# (STATUS_DLL_NOT_FOUND). Copy the runtime DLLs next to the executable.
-# This POST_BUILD step must be registered before gtest_discover_tests adds
+# and later by ctest, but dependency DLLs are not on the loader PATH in CI,
+# so the executable dies at startup with 0xc0000135 (STATUS_DLL_NOT_FOUND).
+# $<TARGET_RUNTIME_DLLS> covers the direct deps (Qt, libobs,
+# obs-frontend-api), but obs.dll privately links FFmpeg and jansson, which
+# the prebuilt OBS package does not model as CMake targets, so those DLLs
+# are missing from the expansion. Copy every DLL from the deps bin dir as
+# well; the set stays correct across dependency version bumps.
+# Each POST_BUILD step must be registered before gtest_discover_tests adds
 # its own, so the DLLs are in place when discovery runs the executable.
 if(WIN32)
+    file(
+        GLOB _obs_test_extra_dlls
+        "${PROJECT_SOURCE_DIR}/.deps/bin/64bit/*.dll"
+    )
     add_custom_command(
         TARGET profile_tests
         POST_BUILD
         COMMAND
             ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:profile_tests>
+            $<TARGET_RUNTIME_DLLS:profile_tests> ${_obs_test_extra_dlls}
             $<TARGET_FILE_DIR:profile_tests>
         COMMAND_EXPAND_LISTS
     )
@@ -80,14 +88,38 @@ target_link_libraries(
 )
 
 if(WIN32)
+    # _obs_test_extra_dlls is globbed once above (see the profile_tests
+    # block): obs.dll's private FFmpeg/jansson deps.
     add_custom_command(
         TARGET settings_tests
         POST_BUILD
         COMMAND
             ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:settings_tests>
+            $<TARGET_RUNTIME_DLLS:settings_tests> ${_obs_test_extra_dlls}
             $<TARGET_FILE_DIR:settings_tests>
         COMMAND_EXPAND_LISTS
     )
 endif()
 gtest_discover_tests(settings_tests)
+
+if(APPLE)
+    # macOS: the test executables link the real libobs and Qt frameworks,
+    # which live in .deps and are not on the loader path when
+    # gtest_discover_tests runs the binaries at build time
+    # (dyld: Library not loaded: @rpath/libobs.framework/...). Point the
+    # loader at the deps via the build rpath.
+    file(
+        GLOB _obs_test_qt_lib_dirs
+        "${PROJECT_SOURCE_DIR}/.deps/obs-deps-qt6-*/lib"
+    )
+    set(_obs_test_rpaths
+        "${PROJECT_SOURCE_DIR}/.deps/Frameworks"
+        "${PROJECT_SOURCE_DIR}/.deps/lib"
+        ${_obs_test_qt_lib_dirs}
+    )
+    set_target_properties(
+        profile_tests
+        settings_tests
+        PROPERTIES BUILD_RPATH "${_obs_test_rpaths}"
+    )
+endif()
