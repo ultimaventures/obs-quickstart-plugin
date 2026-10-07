@@ -1,6 +1,7 @@
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <plugin-support.h>
+#include <util/config-file.h> // config_get_string, config_t
 
 #include <QApplication>
 #include <QClipboard>
