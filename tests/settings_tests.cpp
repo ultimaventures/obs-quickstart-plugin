@@ -62,9 +62,9 @@ config_t *obs_frontend_get_profile_config(void) {
 }
 
 char *obs_frontend_get_current_profile_path(void) {
-  // Real signature returns char* (bfree'd by callers); the module under test
-  // copies it immediately and never frees, so const_cast is safe here.
-  return const_cast<char *>(g_profilePath.c_str());
+  // Real signature returns a heap-allocated char* the caller bfrees (see
+  // profile-module.cpp); duplicate here so the module's bfree is safe.
+  return bstrdup(g_profilePath.c_str());
 }
 
 const char *config_get_string(config_t *config, const char *section,
@@ -131,6 +131,33 @@ std::string readFile(const fs::path &p) {
 }
 
 } // namespace
+
+// ---- libobsEncoderIdForSimpleEncoder (pure) ----
+
+TEST(LibobsEncoderIdForSimpleEncoder, MapsUiStrings) {
+  // Mirrors OBS's get_simple_output_encoder() in
+  // frontend/utility/SimpleOutput.cpp.
+  EXPECT_EQ(settings::libobsEncoderIdForSimpleEncoder("x264"), "obs_x264");
+  EXPECT_EQ(settings::libobsEncoderIdForSimpleEncoder("x264_lowcpu"),
+            "obs_x264");
+  EXPECT_EQ(settings::libobsEncoderIdForSimpleEncoder("nvenc"),
+            "obs_nvenc_h264_tex");
+  EXPECT_EQ(settings::libobsEncoderIdForSimpleEncoder("nvenc_hevc"),
+            "obs_nvenc_hevc_tex");
+  EXPECT_EQ(settings::libobsEncoderIdForSimpleEncoder("nvenc_av1"),
+            "obs_nvenc_av1_tex");
+  EXPECT_EQ(settings::libobsEncoderIdForSimpleEncoder("qsv"), "obs_qsv11_v2");
+  EXPECT_EQ(settings::libobsEncoderIdForSimpleEncoder("amd"),
+            "h264_texture_amf");
+  EXPECT_EQ(settings::libobsEncoderIdForSimpleEncoder("apple_h264"),
+            "com.apple.videotoolbox.videoencoder.ave.avc");
+}
+
+TEST(LibobsEncoderIdForSimpleEncoder, UnknownReturnsEmpty) {
+  EXPECT_EQ(settings::libobsEncoderIdForSimpleEncoder("obs_x264"), "");
+  EXPECT_EQ(settings::libobsEncoderIdForSimpleEncoder("bogus"), "");
+  EXPECT_EQ(settings::libobsEncoderIdForSimpleEncoder(""), "");
+}
 
 // ---- presetKeyForEncoder (pure) ----
 
@@ -220,8 +247,8 @@ protected:
 };
 
 TEST_F(SettingsTest, ApplyEncoderPresetNvenc) {
-  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] =
-      "obs_nvenc_h264_tex";
+  // SimpleOutput/StreamEncoder holds the UI string, not the libobs id.
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "nvenc";
   settings::SettingsManager mgr;
   mgr.applyEncoderPreset("p5");
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "NVENCPreset2"}]), "p5");
@@ -229,11 +256,20 @@ TEST_F(SettingsTest, ApplyEncoderPresetNvenc) {
 }
 
 TEST_F(SettingsTest, ApplyEncoderPresetX264) {
-  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "obs_x264";
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "x264";
   settings::SettingsManager mgr;
   mgr.applyEncoderPreset("veryfast");
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "Preset"}]), "veryfast");
   EXPECT_TRUE(g_fakeConfig.saveCalled);
+}
+
+TEST_F(SettingsTest, ApplyEncoderPresetRefusesMismatchedPreset) {
+  // p5 is NVENC-only; writing it to x264's Preset key would be garbage.
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "x264";
+  settings::SettingsManager mgr;
+  mgr.applyEncoderPreset("p5");
+  EXPECT_EQ(g_fakeConfig.strings.count({"SimpleOutput", "Preset"}), 0u);
+  EXPECT_FALSE(g_fakeConfig.saveCalled);
 }
 
 TEST_F(SettingsTest, ApplyEncoderPresetUnknownEncoderSkipped) {
@@ -257,10 +293,10 @@ TEST_F(SettingsTest, ApplyAudioSettings) {
 TEST_F(SettingsTest, ApplyRecordingSettings) {
   settings::SettingsManager mgr;
   mgr.applyRecordingSettings();
-  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]),
-            "Indistinguishable");
-  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecFormat"}]), "mkv");
-  EXPECT_TRUE((g_fakeConfig.bools[{"SimpleOutput", "RecRemux"}]));
+  // "HQ" is the stored value for the UI's "Indistinguishable" label.
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]), "HQ");
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecFormat2"}]), "mkv");
+  EXPECT_TRUE((g_fakeConfig.bools[{"Video", "AutoRemux"}]));
   EXPECT_TRUE(g_fakeConfig.saveCalled);
 }
 
@@ -297,7 +333,7 @@ TEST_F(SettingsTest, MigrateUnrecognizedEncoder) {
 
 TEST_F(SettingsTest, MigrateUnsupportedEncoder) {
   g_fakeConfig.strings[{"Output", "Mode"}] = "Simple";
-  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "obs_qsv11";
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "qsv";
   g_fakeConfig.strings[{"SimpleOutput", "QSVPreset"}] = "balanced";
   settings::SettingsManager mgr;
   EXPECT_EQ(mgr.migrateToAdvancedMode(),
@@ -308,7 +344,7 @@ TEST_F(SettingsTest, MigrateUnsupportedEncoder) {
 
 TEST_F(SettingsTest, MigrateRejectsBadX264Preset) {
   g_fakeConfig.strings[{"Output", "Mode"}] = "Simple";
-  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "obs_x264";
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "x264";
   g_fakeConfig.strings[{"SimpleOutput", "Preset"}] = "p5"; // NVENC value
   settings::SettingsManager mgr;
   EXPECT_EQ(mgr.migrateToAdvancedMode(),
@@ -318,8 +354,7 @@ TEST_F(SettingsTest, MigrateRejectsBadX264Preset) {
 
 TEST_F(SettingsTest, MigrateSuccessNvenc) {
   g_fakeConfig.strings[{"Output", "Mode"}] = "Simple";
-  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] =
-      "obs_nvenc_h264_tex";
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "nvenc";
   g_fakeConfig.strings[{"SimpleOutput", "NVENCPreset2"}] = "p5";
   g_fakeConfig.uints[{"SimpleOutput", "VBitrate"}] = 6000;
   settings::SettingsManager mgr;
@@ -342,7 +377,7 @@ TEST_F(SettingsTest, MigrateSuccessNvenc) {
 
 TEST_F(SettingsTest, MigrateSuccessX264) {
   g_fakeConfig.strings[{"Output", "Mode"}] = "Simple";
-  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "obs_x264";
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "x264";
   g_fakeConfig.strings[{"SimpleOutput", "Preset"}] = "veryfast";
   g_fakeConfig.uints[{"SimpleOutput", "VBitrate"}] = 8000;
   settings::SettingsManager mgr;
@@ -356,8 +391,7 @@ TEST_F(SettingsTest, MigrateSuccessX264) {
 
 TEST_F(SettingsTest, MigrateSkipsMissingBitrate) {
   g_fakeConfig.strings[{"Output", "Mode"}] = "Simple";
-  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] =
-      "obs_nvenc_h264_tex";
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "nvenc";
   g_fakeConfig.strings[{"SimpleOutput", "NVENCPreset2"}] = "p5";
   // No VBitrate: migration still succeeds; encoder uses its default.
   settings::SettingsManager mgr;
