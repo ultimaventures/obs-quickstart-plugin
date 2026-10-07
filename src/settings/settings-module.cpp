@@ -40,6 +40,10 @@ bool isNvencEncoder(const std::string &encoderId) {
 // SimpleOutput/StreamEncoder) to libobs encoder ids. Mirrors OBS's
 // get_simple_output_encoder() in frontend/utility/SimpleOutput.cpp;
 // the SIMPLE_ENCODER_* constants live in frontend/widgets/OBSBasic.hpp.
+} // namespace
+
+// Matches the declaration in settings-module.hpp; the tests call this
+// function via settings::, so it must NOT live in an anonymous namespace.
 std::string libobsEncoderIdForSimpleEncoder(const std::string &simpleEncoder) {
   if (simpleEncoder == "x264" || simpleEncoder == "x264_lowcpu")
     return "obs_x264";
@@ -65,8 +69,6 @@ std::string libobsEncoderIdForSimpleEncoder(const std::string &simpleEncoder) {
     return "com.apple.videotoolbox.videoencoder.ave.hevc";
   return "";
 }
-
-} // namespace
 
 std::string presetKeyForEncoder(const std::string &encoderId) {
   if (isNvencEncoder(encoderId))
