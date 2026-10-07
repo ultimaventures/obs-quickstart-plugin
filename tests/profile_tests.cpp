@@ -43,6 +43,12 @@ extern "C" {
 
 void blog(int, const char *, ...) { g_blogCalled = true; }
 
+// obs_module_config_path() (used by backupExistingProfile()) references the
+// obs_current_module global, which only exists when linked as an OBS plugin.
+// Define it here (never dereferenced — backupExistingProfile() is not under
+// test) so the test binary links.
+struct obs_module *obs_current_module = nullptr;
+
 // Minimal fake backing the config_get_* stubs: snapshotOutputConfig() reads
 // the wizard-owned keys through these, so tests drive the "after" values
 // here while constructing the "before" snapshot directly.
