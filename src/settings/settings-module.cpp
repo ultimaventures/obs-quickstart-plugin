@@ -32,8 +32,12 @@ bool isValidNvencPreset(const std::string &preset) {
 }
 
 bool isNvencEncoder(const std::string &encoderId) {
-  return encoderId.rfind("obs_nvenc", 0) == 0 ||
-         encoderId.rfind("ffmpeg_nvenc", 0) == 0;
+  // Native OBS NVENC only. The legacy FFmpeg NVENC ids (ffmpeg_nvenc,
+  // ffmpeg_hevc_nvenc) use a different preset property ("preset2", not
+  // "preset" — see frontend/utility/SimpleOutput.cpp), so they must NOT
+  // match here. libobsEncoderIdForSimpleEncoder() never returns ffmpeg_*
+  // ids anyway; excluding them makes any future direct caller fail safe.
+  return encoderId.rfind("obs_nvenc", 0) == 0;
 }
 
 // Maps Simple-mode encoder UI strings (as stored in
@@ -280,6 +284,10 @@ MigrateResult SettingsManager::migrateToAdvancedMode() {
   bfree(profilePathC);
 
   obs_data_t *settings = obs_data_create();
+  // "preset" is correct for native obs_nvenc_* and obs_x264. Do NOT change
+  // to "preset2": OBS uses preset2 only for legacy ffmpeg_nvenc encoders
+  // (frontend/utility/SimpleOutput.cpp: "Only use preset2 for legacy/FFmpeg
+  // NVENC Encoder"), which this module never produces.
   obs_data_set_string(settings, "preset", preset.c_str());
   if (bitrate > 0)
     obs_data_set_int(settings, "bitrate", static_cast<long long>(bitrate));
