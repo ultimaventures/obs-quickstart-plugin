@@ -36,3 +36,24 @@ target_link_libraries(
 
 include(GoogleTest)
 gtest_discover_tests(profile_tests)
+
+add_executable(
+    settings_tests
+    ${CMAKE_CURRENT_LIST_DIR}/settings_tests.cpp
+    ${PROJECT_SOURCE_DIR}/src/settings/settings-module.cpp
+)
+target_include_directories(
+    settings_tests
+    PRIVATE ${PROJECT_SOURCE_DIR}/src/settings
+)
+target_link_libraries(
+    settings_tests
+    PRIVATE
+        OBS::libobs
+        OBS::obs-frontend-api
+        Qt6::Core
+        Qt6::Widgets
+        GTest::gtest_main
+)
+
+gtest_discover_tests(settings_tests)
