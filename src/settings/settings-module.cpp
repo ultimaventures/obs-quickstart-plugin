@@ -32,7 +32,38 @@ bool isValidNvencPreset(const std::string &preset) {
 }
 
 bool isNvencEncoder(const std::string &encoderId) {
-  return encoderId.rfind("obs_nvenc", 0) == 0;
+  return encoderId.rfind("obs_nvenc", 0) == 0 ||
+         encoderId.rfind("ffmpeg_nvenc", 0) == 0;
+}
+
+// Maps Simple-mode encoder UI strings (as stored in
+// SimpleOutput/StreamEncoder) to libobs encoder ids. Mirrors OBS's
+// get_simple_output_encoder() in frontend/utility/SimpleOutput.cpp;
+// the SIMPLE_ENCODER_* constants live in frontend/widgets/OBSBasic.hpp.
+std::string libobsEncoderIdForSimpleEncoder(const std::string &simpleEncoder) {
+  if (simpleEncoder == "x264" || simpleEncoder == "x264_lowcpu")
+    return "obs_x264";
+  if (simpleEncoder == "qsv")
+    return "obs_qsv11_v2";
+  if (simpleEncoder == "qsv_av1")
+    return "obs_qsv11_av1";
+  if (simpleEncoder == "amd")
+    return "h264_texture_amf";
+  if (simpleEncoder == "amd_hevc")
+    return "h265_texture_amf";
+  if (simpleEncoder == "amd_av1")
+    return "av1_texture_amf";
+  if (simpleEncoder == "nvenc")
+    return "obs_nvenc_h264_tex";
+  if (simpleEncoder == "nvenc_hevc")
+    return "obs_nvenc_hevc_tex";
+  if (simpleEncoder == "nvenc_av1")
+    return "obs_nvenc_av1_tex";
+  if (simpleEncoder == "apple_h264")
+    return "com.apple.videotoolbox.videoencoder.ave.avc";
+  if (simpleEncoder == "apple_hevc")
+    return "com.apple.videotoolbox.videoencoder.ave.hevc";
+  return "";
 }
 
 } // namespace
@@ -44,7 +75,10 @@ std::string presetKeyForEncoder(const std::string &encoderId) {
     return "Preset";
   if (encoderId.rfind("obs_qsv", 0) == 0)
     return "QSVPreset";
-  if (encoderId.rfind("amd_amf", 0) == 0) {
+  if (encoderId.rfind("amd_amf", 0) == 0 ||
+      encoderId.rfind("h264_texture_amf", 0) == 0 ||
+      encoderId.rfind("h265_texture_amf", 0) == 0 ||
+      encoderId.rfind("av1_texture_amf", 0) == 0) {
     if (encoderId.find("av1") != std::string::npos)
       return "AMDAV1Preset";
     return "AMDPreset";
@@ -71,19 +105,40 @@ void SettingsManager::applyEncoderPreset(const std::string &preset) {
     blog(LOG_ERROR, "[Settings] applyEncoderPreset: no profile config");
     return;
   }
-  const char *encoderId =
+  const char *simpleEncoderC =
       config_get_string(config, "SimpleOutput", "StreamEncoder");
-  if (!encoderId || !*encoderId) {
+  if (!simpleEncoderC || !*simpleEncoderC) {
     blog(LOG_ERROR,
          "[Settings] applyEncoderPreset: SimpleOutput/StreamEncoder missing");
+    return;
+  }
+  // SimpleOutput/StreamEncoder holds a UI string ("nvenc", "x264", ...),
+  // not a libobs id — resolve it first.
+  const std::string encoderId = libobsEncoderIdForSimpleEncoder(simpleEncoderC);
+  if (encoderId.empty()) {
+    blog(LOG_WARNING,
+         "[Settings] applyEncoderPreset: unrecognized encoder '%s'; preset "
+         "not applied",
+         simpleEncoderC);
     return;
   }
   const std::string key = presetKeyForEncoder(encoderId);
   if (key.empty()) {
     blog(LOG_WARNING,
-         "[Settings] applyEncoderPreset: unrecognized encoder '%s'; preset "
-         "not applied",
-         encoderId);
+         "[Settings] applyEncoderPreset: no preset key for encoder '%s'; "
+         "preset not applied",
+         encoderId.c_str());
+    return;
+  }
+  // Validate the preset value against the encoder family: a p1-p7 string is
+  // meaningless to x264 and vice versa. Refuse rather than writing garbage.
+  const bool presetOk = isNvencEncoder(encoderId) ? isValidNvencPreset(preset)
+                                                  : isValidX264Preset(preset);
+  if (!presetOk) {
+    blog(LOG_WARNING,
+         "[Settings] applyEncoderPreset: preset '%s' invalid for encoder "
+         "'%s'; not applied",
+         preset.c_str(), encoderId.c_str());
     return;
   }
   // NOTE: "preset"/"preset2" are encoder *property* names, not profile keys —
@@ -112,14 +167,16 @@ void SettingsManager::applyRecordingSettings() {
     blog(LOG_ERROR, "[Settings] applyRecordingSettings: no profile config");
     return;
   }
-  // Key names are best-effort (see header): OBS ignores keys it does not
-  // recognize, so a wrong guess is a silent no-op, not corruption.
+  // Exact keys OBS 31 reads (verified against
+  // frontend/utility/SimpleOutput.cpp): RecQuality="HQ" is the stored value
+  // for the UI's "Indistinguishable" label; RecFormat2 (not RecFormat);
+  // Video/AutoRemux (not SimpleOutput/RecRemux).
   config_set_string(config, "SimpleOutput", "RecQuality", RECORDING_QUALITY);
-  config_set_string(config, "SimpleOutput", "RecFormat", RECORDING_FORMAT);
-  config_set_bool(config, "SimpleOutput", "RecRemux", true);
+  config_set_string(config, "SimpleOutput", "RecFormat2", RECORDING_FORMAT);
+  config_set_bool(config, "Video", "AutoRemux", true);
   config_save(config);
-  blog(LOG_INFO, "[Settings] Recording: quality Indistinguishable, format MKV, "
-                 "auto-remux on");
+  blog(LOG_INFO, "[Settings] Recording: quality HQ (Indistinguishable), "
+                 "format MKV, auto-remux on");
 }
 
 MigrateResult SettingsManager::migrateToAdvancedMode() {
@@ -137,22 +194,30 @@ MigrateResult SettingsManager::migrateToAdvancedMode() {
     return MigrateResult::NotSimpleMode;
   }
 
-  // 2. Resolve and validate the encoder id. A null display name means OBS
-  // does not know this encoder — abort rather than writing a bogus id.
-  const char *encoderIdC =
+  // 2. Resolve the Simple-mode encoder UI string to a libobs id. A null
+  // display name means OBS does not know this encoder — abort rather than
+  // writing a bogus id.
+  const char *simpleEncoderC =
       config_get_string(config, "SimpleOutput", "StreamEncoder");
-  if (!encoderIdC || !*encoderIdC) {
+  if (!simpleEncoderC || !*simpleEncoderC) {
     blog(LOG_ERROR,
          "[Settings] migrateToAdvancedMode: SimpleOutput/StreamEncoder "
          "missing; aborting");
     return MigrateResult::UnknownEncoder;
   }
-  const std::string encoderId(encoderIdC);
+  const std::string encoderId = libobsEncoderIdForSimpleEncoder(simpleEncoderC);
+  if (encoderId.empty()) {
+    blog(LOG_ERROR,
+         "[Settings] migrateToAdvancedMode: unrecognized Simple-mode "
+         "encoder '%s'; aborting",
+         simpleEncoderC);
+    return MigrateResult::UnknownEncoder;
+  }
   if (!obs_encoder_get_display_name(encoderId.c_str())) {
     blog(LOG_ERROR,
-         "[Settings] migrateToAdvancedMode: unrecognized encoder '%s'; "
-         "aborting",
-         encoderId.c_str());
+         "[Settings] migrateToAdvancedMode: libobs encoder '%s' (from '%s') "
+         "not available; aborting",
+         encoderId.c_str(), simpleEncoderC);
     return MigrateResult::UnknownEncoder;
   }
 
@@ -195,25 +260,26 @@ MigrateResult SettingsManager::migrateToAdvancedMode() {
          "encoder will use its default bitrate");
   }
 
-  // 6. Stage streamEncoder.json in the profile directory. Written as
-  // obs_data JSON — the same shape OBS's settings dialog produces.
-  // NOTE: obs_frontend_get_current_profile_path() ownership is unclear
-  // (may be internal); copy immediately and never free it — a tiny
-  // one-time leak beats a potential double-free.
-  const char *profilePathC = obs_frontend_get_current_profile_path();
+  // 6. Stage streamEncoder.json in the profile directory, using the safe
+  // writer (atomic rename). Matches profile-module: the frontend API
+  // returns a bstr that the caller frees.
+  char *profilePathC = obs_frontend_get_current_profile_path();
   if (!profilePathC || !*profilePathC) {
     blog(LOG_ERROR,
          "[Settings] migrateToAdvancedMode: could not resolve profile path");
+    bfree(profilePathC);
     return MigrateResult::WriteFailed;
   }
   const std::string jsonPath =
       (fs::u8path(profilePathC) / "streamEncoder.json").u8string();
+  bfree(profilePathC);
 
   obs_data_t *settings = obs_data_create();
   obs_data_set_string(settings, "preset", preset.c_str());
   if (bitrate > 0)
     obs_data_set_int(settings, "bitrate", static_cast<long long>(bitrate));
-  const bool jsonOk = obs_data_save_json(settings, jsonPath.c_str());
+  const bool jsonOk =
+      obs_data_save_json_safe(settings, jsonPath.c_str(), "tmp", "bak");
   obs_data_release(settings);
   if (!jsonOk) {
     blog(LOG_ERROR, "[Settings] migrateToAdvancedMode: failed to write %s",
@@ -228,7 +294,11 @@ MigrateResult SettingsManager::migrateToAdvancedMode() {
   config_set_string(config, "AdvOut", "Encoder", encoderId.c_str());
   config_set_string(config, "Output", "Mode", "Advanced");
   if (config_save(config) != CONFIG_SUCCESS) {
-    blog(LOG_ERROR, "[Settings] migrateToAdvancedMode: config_save failed");
+    // Restore the in-memory mode so a retry sees Simple, not a phantom
+    // Advanced that was never committed to disk.
+    config_set_string(config, "Output", "Mode", "Simple");
+    blog(LOG_ERROR, "[Settings] migrateToAdvancedMode: config_save failed; "
+                    "mode restored to Simple");
     return MigrateResult::WriteFailed;
   }
 
