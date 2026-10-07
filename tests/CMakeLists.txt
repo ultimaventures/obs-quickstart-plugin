@@ -13,6 +13,11 @@ FetchContent_Declare(
 )
 # For Windows: prevent gtest from overriding the parent project's CRT choice.
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+# Don't install googletest: CI builds only the plugin target on macOS, so the
+# gtest libs are never built there and `cmake --install` would fail looking
+# for them. Tests still build and run via ctest on every platform.
+set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+set(INSTALL_GMOCK OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 add_executable(
