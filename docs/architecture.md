@@ -157,12 +157,14 @@ obs_source_t* textSource = obs_source_create(
 
 | Simple source | Advanced target |
 |---|---|
-| `SimpleOutput` / `StreamEncoder` (registered encoder id, e.g. `obs_nvenc_h264_tex`) | `AdvOut` / `Encoder` — same id; validate via `obs_encoder_get_display_name()` before writing |
+| `SimpleOutput` / `StreamEncoder` (UI string, e.g. `nvenc`/`x264`/`qsv` — NOT a libobs id; resolved via `libobsEncoderIdForSimpleEncoder()`, which mirrors OBS's `get_simple_output_encoder()` in `frontend/utility/SimpleOutput.cpp`) | `AdvOut` / `Encoder` — the resolved libobs id; validate via `obs_encoder_get_display_name()` before writing |
 | `SimpleOutput` / `NVENCPreset2` (`p1`–`p7`) | `streamEncoder.json` → `preset` — identical value strings (verified in `plugins/obs-nvenc/nvenc-properties.c`) |
 | `SimpleOutput` / `VBitrate` | `streamEncoder.json` → `bitrate` (int, kbps; verified in `nvenc-properties.c`) |
 | `SimpleOutput` / `ABitrate` | advanced audio encoder's `bitrate` property (exact persistence location to verify at implementation) |
 | `SimpleOutput` / `Preset` (x264, e.g. `veryfast`) | `streamEncoder.json` → `preset` (value strings to verify at implementation) |
 | QSV / AMF / Apple presets | value-string mapping to verify at implementation — abort migration for unrecognized encoders rather than guessing |
+
+> **OBS-upgrade note:** `libobsEncoderIdForSimpleEncoder()` mirrors OBS-internal logic (`get_simple_output_encoder()` in `frontend/utility/SimpleOutput.cpp`, constants in `frontend/widgets/OBSBasic.hpp`). The OBS frontend does not export this mapping, so the plugin cannot call it — the table is hand-maintained. **Re-diff it against OBS source on every OBS major-version upgrade.** The mapping fails safe (unknown UI strings → skip, never guess), so a stale table degrades to skipped encoders, not corrupt configs. Related hand-verified strings in the same area: `SimpleOutput/RecQuality="HQ"` (UI "Indistinguishable"), `SimpleOutput/RecFormat2`, `Video/AutoRemux`.
 
 * `streamEncoder.json` is written as `obs_data` JSON into the profile directory — the same shape OBS's own settings dialog produces via `WriteJsonData`.
 * `Output` / `Mode` is written as `Advanced` last, after all targets are staged.
