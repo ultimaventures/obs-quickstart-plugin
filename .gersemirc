@@ -1,0 +1,12 @@
+# gersemi configuration (auto-discovered from the repository root).
+#
+# `definitions` teaches gersemi the signature of the OBS helper command
+# `set_target_properties_plugin` (defined per-platform under cmake/). Without
+# this, gersemi emits an "unknown command" warning, which the CI formatting
+# wrapper (build-aux/run-gersemi) counts as a failure.
+# Exactly one definitions file is listed on purpose: listing all three
+# platform helpers would trigger gersemi's "conflicting definitions" warning.
+# The Linux helper is used because the CI format check runs on ubuntu-24.04;
+# the command signature is identical on all platforms.
+definitions:
+  - cmake/linux/helpers.cmake
