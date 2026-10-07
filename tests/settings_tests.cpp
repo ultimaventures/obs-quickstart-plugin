@@ -274,6 +274,16 @@ TEST_F(SettingsTest, ApplyEncoderPresetRefusesMismatchedPreset) {
   EXPECT_FALSE(g_fakeConfig.saveCalled);
 }
 
+TEST_F(SettingsTest, ApplyEncoderPresetRefusesQsvWithX264Preset) {
+  // "veryfast" is a valid x264 preset but meaningless to QSV; the x264
+  // list must not validate non-x264 encoders.
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "qsv";
+  settings::SettingsManager mgr;
+  mgr.applyEncoderPreset("veryfast");
+  EXPECT_EQ(g_fakeConfig.strings.count({"SimpleOutput", "QSVPreset"}), 0u);
+  EXPECT_FALSE(g_fakeConfig.saveCalled);
+}
+
 TEST_F(SettingsTest, ApplyEncoderPresetUnknownEncoderSkipped) {
   g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "bogus_encoder";
   settings::SettingsManager mgr;

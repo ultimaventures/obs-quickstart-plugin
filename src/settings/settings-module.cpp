@@ -132,10 +132,13 @@ void SettingsManager::applyEncoderPreset(const std::string &preset) {
          encoderId.c_str());
     return;
   }
-  // Validate the preset value against the encoder family: a p1-p7 string is
-  // meaningless to x264 and vice versa. Refuse rather than writing garbage.
+  // Validate the preset value against the encoder family. Only NVENC
+  // (p1-p7) and x264 (standard names) have verified value lists; QSV/AMF/
+  // Apple presets use different vocabularies, so refuse rather than
+  // writing a value that's invalid for that family.
   const bool presetOk = isNvencEncoder(encoderId) ? isValidNvencPreset(preset)
-                                                  : isValidX264Preset(preset);
+                        : encoderId == "obs_x264" ? isValidX264Preset(preset)
+                                                  : false;
   if (!presetOk) {
     blog(LOG_WARNING,
          "[Settings] applyEncoderPreset: preset '%s' invalid for encoder "
