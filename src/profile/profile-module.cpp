@@ -276,13 +276,25 @@ bool ProfileManager::backupExistingProfile() {
   }
 
   const std::string stamp = std::to_string(std::time(nullptr));
-  // Every component built from OBS strings goes through u8path: operator/
-  // with a plain std::string would decode profileName with the Windows ANSI
-  // code page, mangling non-ASCII profile names (e.g. "Café"). OBS hands out
-  // UTF-8; keep it UTF-8 all the way down.
+  // Backups live in the plugin config dir, not the profiles dir: OBS
+  // enumerates the profiles directory, and a quickstart-backups/ folder
+  // there risks appearing as a phantom profile. obs_module_config_path()
+  // resolves <obs_config>/plugin_config/<module>/quickstart-backups/ from
+  // OBS's own config base, so it respects portable mode (QStandardPaths
+  // would write to the real user AppData even in portable mode). A NULL
+  // return (config dir unset) fails the backup loudly — never silently fall
+  // back to the profiles dir.
+  char *rawBase = obs_module_config_path("quickstart-backups");
+  if (!rawBase) {
+    blog(LOG_ERROR,
+         "[Profile] Could not resolve plugin config dir; backup refused");
+    return false;
+  }
+  const std::string backupsDir(rawBase); // UTF-8 bytes
+  bfree(rawBase);
+
   const std::filesystem::path dest =
-      std::filesystem::u8path(profilePath).parent_path() /
-      "quickstart-backups" / std::filesystem::u8path(profileName + "_" + stamp);
+      backupDestinationFor(backupsDir, profileName, stamp);
 
   blog(LOG_INFO, "[Profile] Backing up profile '%s' to '%s'",
        profileName.c_str(), dest.u8string().c_str());
