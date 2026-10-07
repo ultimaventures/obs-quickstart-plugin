@@ -56,4 +56,10 @@ set_target_properties_plugin(
 )
 
 enable_testing()
-add_subdirectory(tests)
+
+# Unit tests need network access (FetchContent downloads googletest), so
+# packagers and offline builds can disable them.
+option(OBS_QUICKSTART_BUILD_TESTS "Build unit tests" ON)
+if(OBS_QUICKSTART_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
