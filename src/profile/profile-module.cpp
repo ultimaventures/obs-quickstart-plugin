@@ -123,6 +123,17 @@ bool copyDirectoryTree(const std::string &source,
   return true;
 }
 
+std::filesystem::path backupDestinationFor(const std::string &backupsDir,
+                                           const std::string &profileName,
+                                           const std::string &stamp) {
+  // Every component built from OBS strings goes through u8path: operator/
+  // with a plain std::string would decode with the Windows ANSI code page,
+  // mangling non-ASCII profile names (e.g. "Café"). OBS hands out UTF-8;
+  // keep it UTF-8 all the way down.
+  return std::filesystem::u8path(backupsDir) /
+         std::filesystem::u8path(profileName + "_" + stamp);
+}
+
 std::vector<std::string> ProfileManager::listProfiles() const {
   std::vector<std::string> names;
   char **profiles = obs_frontend_get_profiles();
