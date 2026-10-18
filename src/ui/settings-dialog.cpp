@@ -14,26 +14,10 @@
 namespace obs_setup {
 namespace ui {
 
-namespace {
-
-bool isNvenc(const std::string &encoderId) {
-  return encoderId.rfind("obs_nvenc", 0) == 0;
-}
-
-/** True for encoder families with a verified preset list (NVENC, x264). */
-bool hasVerifiedPresets(const std::string &encoderId) {
-  return isNvenc(encoderId) || encoderId == "obs_x264";
-}
-
-// Standard x264 preset names, fastest to slowest. Mirrors the list
-// SettingsManager validates against in settings-module.cpp.
-constexpr const char *kX264Presets[] = {
-    "ultrafast", "superfast", "veryfast", "faster",   "fast",
-    "medium",    "slow",      "slower",   "veryslow", "placebo",
-};
-constexpr const char *kDefaultX264Preset = "veryfast";
-
-} // namespace
+// The preset vocabulary lives in the settings module
+// (settings::presetsFor / settings::defaultPresetFor) — the same lists
+// SettingsManager validates against — so the dialog can never offer a
+// preset the backend would refuse.
 
 SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
   setWindowTitle("OBS Quickstart Settings");
@@ -92,40 +76,25 @@ void SettingsDialog::populatePresets(const std::string &encoderId,
                                      const std::string &currentPreset) {
   m_presetCombo->clear();
 
-  if (isNvenc(encoderId)) {
-    for (int i = 1; i <= 7; ++i) {
-      const std::string preset = "p" + std::to_string(i);
-      QString label = QString::fromStdString(preset);
-      if (i == 1)
-        label += " (fastest)";
-      if (i == 7)
-        label += " (best quality)";
-      if (preset == settings::DEFAULT_ENCODER_PRESET)
-        label += " — recommended";
-      m_presetCombo->addItem(label, QString::fromStdString(preset));
-    }
-  } else if (encoderId == "obs_x264") {
-    for (const char *preset : kX264Presets) {
-      QString label = QString::fromUtf8(preset);
-      if (std::string(preset) == kDefaultX264Preset)
-        label += " — recommended";
-      m_presetCombo->addItem(label, QString::fromUtf8(preset));
-    }
-  } else {
-    return; // No verified preset list for this encoder family.
+  const std::string defaultPreset = settings::defaultPresetFor(encoderId);
+  for (const std::string &preset : settings::presetsFor(encoderId)) {
+    QString label = QString::fromStdString(preset);
+    if (preset == "p1")
+      label += " (fastest)";
+    if (preset == "p7")
+      label += " (best quality)";
+    if (preset == defaultPreset)
+      label += " — recommended";
+    m_presetCombo->addItem(label, QString::fromStdString(preset));
   }
 
   // Pre-select the profile's current preset when it is one of ours;
   // otherwise the family default (the combo's data for both is the raw
-  // preset string).
-  QString wanted = QString::fromStdString(currentPreset);
-  int index = m_presetCombo->findData(wanted);
-  if (index < 0) {
-    const std::string fallback = isNvenc(encoderId)
-                                     ? settings::DEFAULT_ENCODER_PRESET
-                                     : kDefaultX264Preset;
-    index = m_presetCombo->findData(QString::fromStdString(fallback));
-  }
+  // preset string). Encoders without a verified list leave the combo
+  // empty.
+  int index = m_presetCombo->findData(QString::fromStdString(currentPreset));
+  if (index < 0)
+    index = m_presetCombo->findData(QString::fromStdString(defaultPreset));
   if (index >= 0)
     m_presetCombo->setCurrentIndex(index);
 }
@@ -176,10 +145,13 @@ void SettingsDialog::refreshState() {
   }
   populatePresets(encoderId, currentPreset);
 
-  const bool presetsOk = hasVerifiedPresets(encoderId);
+  const bool presetsOk = !settings::presetsFor(encoderId).empty();
+  const bool migrateOk = settings::canMigrateEncoderPreset(encoderId);
   m_presetCombo->setEnabled(simple && presetsOk);
   m_applyButton->setEnabled(simple);
-  m_migrateButton->setEnabled(simple);
+  // Disable migration up front for encoders whose preset mapping is
+  // unverified, instead of letting the user confirm and then be refused.
+  m_migrateButton->setEnabled(simple && migrateOk);
 
   if (!simple) {
     m_presetNote->setText(
@@ -188,12 +160,13 @@ void SettingsDialog::refreshState() {
   } else if (encoderId.empty()) {
     m_presetNote->setText(
         "The current encoder isn't recognized, so no preset will be "
-        "applied. Audio and recording settings still apply.");
+        "applied and migration is unavailable. Audio and recording "
+        "settings still apply.");
   } else if (!presetsOk) {
     m_presetNote->setText(
-        "Preset selection isn't available for this encoder yet (only NVENC "
-        "and x264 are verified). Audio and recording settings will still "
-        "be applied.");
+        "Preset selection and migration aren't available for this encoder "
+        "yet (only NVENC and x264 are verified). Audio and recording "
+        "settings will still be applied.");
   } else {
     m_presetNote->setText("");
   }
@@ -204,26 +177,46 @@ void SettingsDialog::refreshState() {
 }
 
 void SettingsDialog::onApplyClicked() {
-  QString presetSummary;
+  // Report each item from the manager's verified result — never claim a
+  // success the backend could not confirm.
+  QString presetLine;
+  bool allOk = true;
   if (m_presetCombo->isEnabled()) {
     const std::string preset =
         m_presetCombo->currentData().toString().toStdString();
-    m_manager.applyEncoderPreset(preset);
-    presetSummary = QString::fromStdString(preset);
+    if (m_manager.applyEncoderPreset(preset)) {
+      presetLine =
+          QString("• Encoder preset: %1").arg(QString::fromStdString(preset));
+    } else {
+      presetLine = "• Encoder preset: FAILED";
+      allOk = false;
+    }
   } else {
-    presetSummary = "skipped (unsupported encoder)";
+    presetLine = "• Encoder preset: skipped (unsupported encoder)";
   }
-  m_manager.applyAudioSettings();
-  m_manager.applyRecordingSettings();
+  const bool audioOk = m_manager.applyAudioSettings();
+  const bool recordingOk = m_manager.applyRecordingSettings();
+  allOk = allOk && audioOk && recordingOk;
 
-  QMessageBox::information(this, "OBS Quickstart Settings",
-                           QString("Settings applied:\n\n"
-                                   "• Encoder preset: %1\n"
-                                   "• Audio: 48 kHz, Stereo\n"
-                                   "• Recording: HQ quality, MKV, auto-remux "
-                                   "on\n\n"
-                                   "Verify in Settings > Output.")
-                               .arg(presetSummary));
+  const QString body =
+      QString("%1\n"
+              "• Audio: %2\n"
+              "• Recording: %3\n\n"
+              "The preset applies to your next stream or recording. The "
+              "audio change (48 kHz) takes effect after you restart OBS, "
+              "or open Settings and click OK.")
+          .arg(presetLine, audioOk ? "48 kHz, Stereo" : "FAILED",
+               recordingOk ? "Indistinguishable quality, MKV, auto-remux on"
+                           : "FAILED");
+  if (allOk) {
+    QMessageBox::information(this, "OBS Quickstart Settings",
+                             "Settings applied:\n\n" + body);
+  } else {
+    QMessageBox::warning(this, "OBS Quickstart Settings",
+                         "Some settings could not be applied:\n\n" + body +
+                             "\n\nSee the log (Help > Log Files) for "
+                             "details.");
+  }
   refreshState();
 }
 
@@ -252,7 +245,9 @@ void SettingsDialog::onMigrateClicked() {
           this, title,
           "Migrated to Advanced mode.\n\n"
           "Recording settings were NOT migrated (no Advanced equivalent) — "
-          "please set them manually in Settings > Output.");
+          "please set them manually in Settings > Output.\n\n"
+          "This takes effect after you restart OBS, or open Settings and "
+          "click OK. Until then, this session keeps using Simple output.");
     }
     break;
   case MigrateResult::NotSimpleMode:
