@@ -19,6 +19,7 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include <obs-frontend-api.h>
 #include <obs.h>              // obs_data_*, obs_encoder_get_display_name
@@ -39,16 +40,21 @@ struct FakeConfig {
   std::map<std::pair<std::string, std::string>, uint64_t> uints;
   std::map<std::pair<std::string, std::string>, bool> bools;
   bool saveCalled = false;
+  bool saveFails = false; // when true, config_save() returns CONFIG_ERROR
 
   void clear() {
     strings.clear();
     uints.clear();
     bools.clear();
     saveCalled = false;
+    saveFails = false;
   }
 };
 
 FakeConfig g_fakeConfig;
+// When false, obs_frontend_get_profile_config() returns nullptr,
+// mirroring OBS running without a loaded profile.
+bool g_configAvailable = true;
 // Profile directory returned by the obs_frontend_get_current_profile_path
 // stub; set per-test to a sandbox dir.
 std::string g_profilePath;
@@ -58,6 +64,8 @@ extern "C" {
 void blog(int, const char *, ...) {}
 
 config_t *obs_frontend_get_profile_config(void) {
+  if (!g_configAvailable)
+    return nullptr;
   return reinterpret_cast<config_t *>(&g_fakeConfig);
 }
 
@@ -103,8 +111,9 @@ void config_set_bool(config_t *config, const char *section, const char *name,
 }
 
 int config_save(config_t *config) {
-  reinterpret_cast<FakeConfig *>(config)->saveCalled = true;
-  return CONFIG_SUCCESS;
+  auto *fake = reinterpret_cast<FakeConfig *>(config);
+  fake->saveCalled = true;
+  return fake->saveFails ? CONFIG_ERROR : CONFIG_SUCCESS;
 }
 
 // Known encoder ids for the migrate validation. Unknown ids return null,
@@ -228,12 +237,53 @@ TEST(IsValidX264Preset, RejectsUnknown) {
   EXPECT_FALSE(settings::isValidX264Preset("VeryFast")); // case-sensitive
 }
 
+// ---- presetsFor / defaultPresetFor (pure) ----
+// These lists are the single source of truth shared by SettingsManager's
+// validation and the settings dialog's preset picker.
+
+TEST(PresetsFor, Nvenc) {
+  EXPECT_EQ(
+      settings::presetsFor("obs_nvenc_h264_tex"),
+      (std::vector<std::string>{"p1", "p2", "p3", "p4", "p5", "p6", "p7"}));
+  EXPECT_EQ(settings::presetsFor("obs_nvenc_av1_tex"),
+            settings::presetsFor("obs_nvenc_h264_tex"));
+}
+
+TEST(PresetsFor, X264) {
+  EXPECT_EQ(settings::presetsFor("obs_x264"),
+            (std::vector<std::string>{"ultrafast", "superfast", "veryfast",
+                                      "faster", "fast", "medium", "slow",
+                                      "slower", "veryslow", "placebo"}));
+}
+
+TEST(PresetsFor, UnverifiedEncodersEmpty) {
+  // QSV/AMF/Apple vocabularies are unverified: empty, never guessed. This
+  // is also what keeps the legacy FFmpeg NVENC ids out.
+  EXPECT_TRUE(settings::presetsFor("obs_qsv11_v2").empty());
+  EXPECT_TRUE(settings::presetsFor("h264_texture_amf").empty());
+  EXPECT_TRUE(settings::presetsFor("ffmpeg_nvenc").empty());
+  EXPECT_TRUE(settings::presetsFor("bogus_encoder").empty());
+  EXPECT_TRUE(settings::presetsFor("").empty());
+}
+
+TEST(DefaultPresetFor, KnownFamilies) {
+  EXPECT_EQ(settings::defaultPresetFor("obs_nvenc_h264_tex"), "p5");
+  EXPECT_EQ(settings::defaultPresetFor("obs_x264"), "veryfast");
+}
+
+TEST(DefaultPresetFor, UnverifiedEncodersEmpty) {
+  EXPECT_EQ(settings::defaultPresetFor("obs_qsv11_v2"), "");
+  EXPECT_EQ(settings::defaultPresetFor("bogus_encoder"), "");
+  EXPECT_EQ(settings::defaultPresetFor(""), "");
+}
+
 // ---- apply* methods (via FakeConfig) ----
 
 class SettingsTest : public ::testing::Test {
 protected:
   void SetUp() override {
     g_fakeConfig.clear();
+    g_configAvailable = true;
     sandbox_ = fs::temp_directory_path() / "quickstart-settings-tests";
     std::error_code ec;
     fs::remove_all(sandbox_, ec);
@@ -255,7 +305,7 @@ TEST_F(SettingsTest, ApplyEncoderPresetNvenc) {
   // SimpleOutput/StreamEncoder holds the UI string, not the libobs id.
   g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "nvenc";
   settings::SettingsManager mgr;
-  mgr.applyEncoderPreset("p5");
+  EXPECT_TRUE(mgr.applyEncoderPreset("p5"));
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "NVENCPreset2"}]), "p5");
   EXPECT_TRUE(g_fakeConfig.saveCalled);
 }
@@ -263,7 +313,7 @@ TEST_F(SettingsTest, ApplyEncoderPresetNvenc) {
 TEST_F(SettingsTest, ApplyEncoderPresetX264) {
   g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "x264";
   settings::SettingsManager mgr;
-  mgr.applyEncoderPreset("veryfast");
+  EXPECT_TRUE(mgr.applyEncoderPreset("veryfast"));
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "Preset"}]), "veryfast");
   EXPECT_TRUE(g_fakeConfig.saveCalled);
 }
@@ -272,7 +322,7 @@ TEST_F(SettingsTest, ApplyEncoderPresetRefusesMismatchedPreset) {
   // p5 is NVENC-only; writing it to x264's Preset key would be garbage.
   g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "x264";
   settings::SettingsManager mgr;
-  mgr.applyEncoderPreset("p5");
+  EXPECT_FALSE(mgr.applyEncoderPreset("p5"));
   EXPECT_EQ(g_fakeConfig.strings.count({"SimpleOutput", "Preset"}), 0u);
   EXPECT_FALSE(g_fakeConfig.saveCalled);
 }
@@ -282,7 +332,7 @@ TEST_F(SettingsTest, ApplyEncoderPresetRefusesQsvWithX264Preset) {
   // list must not validate non-x264 encoders.
   g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "qsv";
   settings::SettingsManager mgr;
-  mgr.applyEncoderPreset("veryfast");
+  EXPECT_FALSE(mgr.applyEncoderPreset("veryfast"));
   EXPECT_EQ(g_fakeConfig.strings.count({"SimpleOutput", "QSVPreset"}), 0u);
   EXPECT_FALSE(g_fakeConfig.saveCalled);
 }
@@ -290,7 +340,7 @@ TEST_F(SettingsTest, ApplyEncoderPresetRefusesQsvWithX264Preset) {
 TEST_F(SettingsTest, ApplyEncoderPresetUnknownEncoderSkipped) {
   g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "bogus_encoder";
   settings::SettingsManager mgr;
-  mgr.applyEncoderPreset("p5");
+  EXPECT_FALSE(mgr.applyEncoderPreset("p5"));
   // No preset key written and nothing persisted: never guess a key.
   EXPECT_EQ(g_fakeConfig.strings.count({"SimpleOutput", "NVENCPreset2"}), 0u);
   EXPECT_EQ(g_fakeConfig.strings.count({"SimpleOutput", "Preset"}), 0u);
@@ -299,7 +349,7 @@ TEST_F(SettingsTest, ApplyEncoderPresetUnknownEncoderSkipped) {
 
 TEST_F(SettingsTest, ApplyAudioSettings) {
   settings::SettingsManager mgr;
-  mgr.applyAudioSettings();
+  EXPECT_TRUE(mgr.applyAudioSettings());
   EXPECT_EQ((g_fakeConfig.uints[{"Audio", "SampleRate"}]), 48000u);
   EXPECT_EQ((g_fakeConfig.strings[{"Audio", "ChannelSetup"}]), "Stereo");
   EXPECT_TRUE(g_fakeConfig.saveCalled);
@@ -307,12 +357,39 @@ TEST_F(SettingsTest, ApplyAudioSettings) {
 
 TEST_F(SettingsTest, ApplyRecordingSettings) {
   settings::SettingsManager mgr;
-  mgr.applyRecordingSettings();
+  EXPECT_TRUE(mgr.applyRecordingSettings());
   // "HQ" is the stored value for the UI's "Indistinguishable" label.
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]), "HQ");
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecFormat2"}]), "mkv");
   EXPECT_TRUE((g_fakeConfig.bools[{"Video", "AutoRemux"}]));
   EXPECT_TRUE(g_fakeConfig.saveCalled);
+}
+
+// The apply* methods must report failure, not just log it — the dialog
+// shows per-item results from these returns.
+
+TEST_F(SettingsTest, ApplyReturnsFalseWhenSaveFails) {
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "nvenc";
+  g_fakeConfig.saveFails = true;
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyEncoderPreset("p5"));
+  EXPECT_FALSE(mgr.applyAudioSettings());
+  EXPECT_FALSE(mgr.applyRecordingSettings());
+}
+
+TEST_F(SettingsTest, ApplyReturnsFalseWithNoProfileConfig) {
+  g_configAvailable = false;
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyEncoderPreset("p5"));
+  EXPECT_FALSE(mgr.applyAudioSettings());
+  EXPECT_FALSE(mgr.applyRecordingSettings());
+}
+
+TEST_F(SettingsTest, ApplyEncoderPresetMissingEncoderKey) {
+  // No StreamEncoder key at all: nothing to resolve, report failure.
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyEncoderPreset("p5"));
+  EXPECT_FALSE(g_fakeConfig.saveCalled);
 }
 
 // ---- migrateToAdvancedMode ----
@@ -402,6 +479,19 @@ TEST_F(SettingsTest, MigrateSuccessX264) {
   const std::string content = readFile(sandbox_ / "streamEncoder.json");
   EXPECT_NE(content.find("veryfast"), std::string::npos);
   EXPECT_NE(content.find("8000"), std::string::npos);
+}
+
+TEST_F(SettingsTest, MigrateSaveFailureRestoresSimpleMode) {
+  g_fakeConfig.strings[{"Output", "Mode"}] = "Simple";
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "x264";
+  g_fakeConfig.strings[{"SimpleOutput", "Preset"}] = "veryfast";
+  g_fakeConfig.saveFails = true;
+  settings::SettingsManager mgr;
+  EXPECT_EQ(mgr.migrateToAdvancedMode(), settings::MigrateResult::WriteFailed);
+  EXPECT_FALSE(mgr.needsRecordingModal());
+  // The in-memory mode is rolled back so a retry sees Simple, not a
+  // phantom Advanced that was never committed to disk.
+  EXPECT_EQ((g_fakeConfig.strings[{"Output", "Mode"}]), "Simple");
 }
 
 TEST_F(SettingsTest, MigrateSkipsMissingBitrate) {
