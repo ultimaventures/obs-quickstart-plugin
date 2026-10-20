@@ -171,18 +171,22 @@ bool SettingsManager::applyEncoderPreset(const std::string &preset) {
   // never write those. The key above is the verified Simple-mode profile key.
   // Capture the old value first: if the save fails, restore it so the
   // in-memory config is not left dirty (OBS's next save would otherwise
-  // persist a value this method reported as FAILED).
+  // persist a value this method reported as FAILED). "Had a value" means
+  // a user value specifically (config_has_user_value): config_get_string
+  // also returns registered defaults, and restoring a default would write
+  // an explicit key where the profile deliberately had none.
+  const bool hadOldPreset =
+      config_has_user_value(config, "SimpleOutput", key.c_str());
   const char *oldPresetC =
       config_get_string(config, "SimpleOutput", key.c_str());
-  const bool hadOldPreset = oldPresetC != nullptr;
-  const std::string oldPreset = hadOldPreset ? oldPresetC : "";
+  const std::string oldPreset = oldPresetC ? oldPresetC : "";
   config_set_string(config, "SimpleOutput", key.c_str(), preset.c_str());
-  if (config_save(config) != CONFIG_SUCCESS) {
+  if (config_save_safe(config, "tmp", nullptr) != CONFIG_SUCCESS) {
     if (hadOldPreset)
       config_set_string(config, "SimpleOutput", key.c_str(), oldPreset.c_str());
     else
       config_remove_value(config, "SimpleOutput", key.c_str());
-    blog(LOG_ERROR, "[Settings] applyEncoderPreset: config_save failed; "
+    blog(LOG_ERROR, "[Settings] applyEncoderPreset: config_save_safe failed; "
                     "previous value restored");
     return false;
   }
@@ -198,20 +202,27 @@ bool SettingsManager::applyAudioSettings() {
     return false;
   }
   // Capture old values first; restore them if the save fails (see
-  // applyEncoderPreset for why a dirty in-memory value is a real bug).
+  // applyEncoderPreset for why a dirty in-memory value is a real bug, and
+  // for why "had a value" is config_has_user_value, not a null check —
+  // without it, an absent SampleRate would "restore" as an explicit 0).
   const uint64_t oldRate = config_get_uint(config, "Audio", "SampleRate");
+  const bool hadOldRate = config_has_user_value(config, "Audio", "SampleRate");
+  const bool hadOldSetup =
+      config_has_user_value(config, "Audio", "ChannelSetup");
   const char *oldSetupC = config_get_string(config, "Audio", "ChannelSetup");
-  const bool hadOldSetup = oldSetupC != nullptr;
-  const std::string oldSetup = hadOldSetup ? oldSetupC : "";
+  const std::string oldSetup = oldSetupC ? oldSetupC : "";
   config_set_uint(config, "Audio", "SampleRate", AUDIO_SAMPLE_RATE_HZ);
   config_set_string(config, "Audio", "ChannelSetup", AUDIO_CHANNEL_SETUP);
-  if (config_save(config) != CONFIG_SUCCESS) {
-    config_set_uint(config, "Audio", "SampleRate", oldRate);
+  if (config_save_safe(config, "tmp", nullptr) != CONFIG_SUCCESS) {
+    if (hadOldRate)
+      config_set_uint(config, "Audio", "SampleRate", oldRate);
+    else
+      config_remove_value(config, "Audio", "SampleRate");
     if (hadOldSetup)
       config_set_string(config, "Audio", "ChannelSetup", oldSetup.c_str());
     else
       config_remove_value(config, "Audio", "ChannelSetup");
-    blog(LOG_ERROR, "[Settings] applyAudioSettings: config_save failed; "
+    blog(LOG_ERROR, "[Settings] applyAudioSettings: config_save_safe failed; "
                     "previous values restored");
     return false;
   }
@@ -231,19 +242,22 @@ bool SettingsManager::applyRecordingSettings() {
   // Video/AutoRemux (not SimpleOutput/RecRemux).
   // Capture old values first; restore them if the save fails (see
   // applyEncoderPreset for why a dirty in-memory value is a real bug).
+  const bool hadOldQuality =
+      config_has_user_value(config, "SimpleOutput", "RecQuality");
   const char *oldQualityC =
       config_get_string(config, "SimpleOutput", "RecQuality");
-  const bool hadOldQuality = oldQualityC != nullptr;
-  const std::string oldQuality = hadOldQuality ? oldQualityC : "";
+  const std::string oldQuality = oldQualityC ? oldQualityC : "";
+  const bool hadOldFormat =
+      config_has_user_value(config, "SimpleOutput", "RecFormat2");
   const char *oldFormatC =
       config_get_string(config, "SimpleOutput", "RecFormat2");
-  const bool hadOldFormat = oldFormatC != nullptr;
-  const std::string oldFormat = hadOldFormat ? oldFormatC : "";
+  const std::string oldFormat = oldFormatC ? oldFormatC : "";
+  const bool hadOldRemux = config_has_user_value(config, "Video", "AutoRemux");
   const bool oldRemux = config_get_bool(config, "Video", "AutoRemux");
   config_set_string(config, "SimpleOutput", "RecQuality", RECORDING_QUALITY);
   config_set_string(config, "SimpleOutput", "RecFormat2", RECORDING_FORMAT);
   config_set_bool(config, "Video", "AutoRemux", true);
-  if (config_save(config) != CONFIG_SUCCESS) {
+  if (config_save_safe(config, "tmp", nullptr) != CONFIG_SUCCESS) {
     if (hadOldQuality)
       config_set_string(config, "SimpleOutput", "RecQuality",
                         oldQuality.c_str());
@@ -254,9 +268,12 @@ bool SettingsManager::applyRecordingSettings() {
                         oldFormat.c_str());
     else
       config_remove_value(config, "SimpleOutput", "RecFormat2");
-    config_set_bool(config, "Video", "AutoRemux", oldRemux);
-    blog(LOG_ERROR, "[Settings] applyRecordingSettings: config_save failed; "
-                    "previous values restored");
+    if (hadOldRemux)
+      config_set_bool(config, "Video", "AutoRemux", oldRemux);
+    else
+      config_remove_value(config, "Video", "AutoRemux");
+    blog(LOG_ERROR, "[Settings] applyRecordingSettings: config_save_safe "
+                    "failed; previous values restored");
     return false;
   }
   blog(LOG_INFO, "[Settings] Recording: quality HQ (Indistinguishable), "
@@ -375,18 +392,21 @@ MigrateResult SettingsManager::migrateToAdvancedMode() {
     return MigrateResult::WriteFailed;
   }
 
-  // 7. Stage the config keys. Output/Mode goes LAST — only config_save()
-  // commits, so any failure above leaves Simple mode intact on disk.
+  // 7. Stage the config keys. Output/Mode goes LAST — only the save
+  // commits, so any failure above leaves Simple mode intact. The commit
+  // itself uses config_save_safe (write to basic.ini.tmp, rename over
+  // the real file only on success — the same call OBS's own UI makes for
+  // this config), so even a mid-write failure cannot truncate basic.ini.
   // ABitrate is intentionally NOT migrated: its Advanced-mode destination
   // is unverified, and the encoder default is safe.
   config_set_string(config, "AdvOut", "Encoder", encoderId.c_str());
   config_set_string(config, "Output", "Mode", "Advanced");
-  if (config_save(config) != CONFIG_SUCCESS) {
+  if (config_save_safe(config, "tmp", nullptr) != CONFIG_SUCCESS) {
     // Restore the in-memory mode so a retry sees Simple, not a phantom
     // Advanced that was never committed to disk.
     config_set_string(config, "Output", "Mode", "Simple");
-    blog(LOG_ERROR, "[Settings] migrateToAdvancedMode: config_save failed; "
-                    "mode restored to Simple");
+    blog(LOG_ERROR, "[Settings] migrateToAdvancedMode: config_save_safe "
+                    "failed; mode restored to Simple");
     return MigrateResult::WriteFailed;
   }
 
