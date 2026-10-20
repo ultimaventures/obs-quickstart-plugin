@@ -10,6 +10,7 @@
 
 #include "detection/detection-module.hpp"
 #include "profile/profile-module.hpp"
+#include "settings/settings-module.hpp"
 #include "ui/ui-module.hpp"
 
 extern "C" {
@@ -132,6 +133,121 @@ static void on_profile_test_menu_item_clicked(void *private_data) {
   }
 }
 
+/**
+ * @brief Callback for the "Tools > OBS Setup Test: Apply Settings" menu item.
+ *
+ * Debug hook for manual testing of the SettingsManager: applies the encoder
+ * preset (NVENC p5 or x264 veryfast, depending on the active Simple-mode
+ * encoder), 48 kHz stereo audio, and MKV/HQ/auto-remux recording settings.
+ * Shows a summary of what was written. The user can verify in Settings >
+ * Output afterwards.
+ *
+ * Runs on the GUI thread; SettingsManager requires it.
+ */
+static void on_apply_settings_menu_item_clicked(void *private_data) {
+  (void)private_data;
+
+  QMainWindow *mainWindow =
+      static_cast<QMainWindow *>(obs_frontend_get_main_window());
+
+  config_t *config = obs_frontend_get_profile_config();
+  if (!config) {
+    QMessageBox::warning(mainWindow, "OBS Setup Test: Apply Settings",
+                         "No profile config available.");
+    return;
+  }
+
+  const char *simpleEncoder =
+      config_get_string(config, "SimpleOutput", "StreamEncoder");
+  const std::string encoderId =
+      obs_setup::settings::libobsEncoderIdForSimpleEncoder(
+          simpleEncoder ? simpleEncoder : "");
+
+  obs_setup::settings::SettingsManager mgr;
+
+  // Pick a family-appropriate preset for the active encoder.
+  std::string preset;
+  if (encoderId.rfind("obs_nvenc", 0) == 0) {
+    preset = obs_setup::settings::DEFAULT_ENCODER_PRESET; // "p5"
+  } else if (encoderId == "obs_x264") {
+    preset = "veryfast";
+  }
+  if (!preset.empty()) {
+    mgr.applyEncoderPreset(preset);
+  }
+  mgr.applyAudioSettings();
+  mgr.applyRecordingSettings();
+
+  QString summary = QString("Applied settings for encoder '%1':\n\n")
+                        .arg(QString::fromStdString(
+                            simpleEncoder ? simpleEncoder : "(none)"));
+  if (!preset.empty()) {
+    summary +=
+        QString("• Encoder preset: %1\n").arg(QString::fromStdString(preset));
+  } else {
+    summary += "• Encoder preset: skipped (unsupported encoder)\n";
+  }
+  summary += "• Audio: 48 kHz, Stereo\n"
+             "• Recording: HQ quality, MKV, auto-remux on\n\n"
+             "Verify in Settings > Output.";
+  QMessageBox::information(mainWindow, "OBS Setup Test: Apply Settings",
+                           summary);
+}
+
+/**
+ * @brief Callback for the "Tools > OBS Setup Test: Migrate to Advanced" menu
+ * item.
+ *
+ * Debug hook for manual testing of migrateToAdvancedMode(): migrates the
+ * Simple-mode streaming encoder to Advanced mode. Shows the result and, on
+ * success, reminds the user to configure recording settings manually
+ * (they have no Advanced equivalent).
+ *
+ * Runs on the GUI thread; SettingsManager requires it.
+ */
+static void on_migrate_menu_item_clicked(void *private_data) {
+  (void)private_data;
+
+  QMainWindow *mainWindow =
+      static_cast<QMainWindow *>(obs_frontend_get_main_window());
+
+  obs_setup::settings::SettingsManager mgr;
+  const auto result = mgr.migrateToAdvancedMode();
+
+  using obs_setup::settings::MigrateResult;
+  QString title = "OBS Setup Test: Migrate to Advanced";
+  switch (result) {
+  case MigrateResult::Success:
+    QMessageBox::information(
+        mainWindow, title,
+        "Migrated to Advanced mode.\n\n"
+        "Recording settings were NOT migrated (no Advanced equivalent) — "
+        "please set them manually in Settings > Output.");
+    break;
+  case MigrateResult::NotSimpleMode:
+    QMessageBox::warning(mainWindow, title,
+                         "Output mode is not Simple — nothing to migrate.");
+    break;
+  case MigrateResult::UnknownEncoder:
+    QMessageBox::warning(mainWindow, title,
+                         "Could not identify the Simple-mode encoder. "
+                         "Migration aborted; nothing was changed.");
+    break;
+  case MigrateResult::UnsupportedEncoder:
+    QMessageBox::warning(
+        mainWindow, title,
+        "The active encoder's preset mapping is unverified (QSV/AMF/Apple). "
+        "Migration refused rather than guessing; nothing was changed.");
+    break;
+  case MigrateResult::WriteFailed:
+    QMessageBox::critical(mainWindow, title,
+                          "Failed to write the migration. Check the log "
+                          "(Help > Log Files) for details. Your profile was "
+                          "not modified.");
+    break;
+  }
+}
+
 bool obs_module_load(void) {
   obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
 
@@ -142,6 +258,13 @@ bool obs_module_load(void) {
   // Add the "Tools > OBS Setup Test: Quickstart Profile" menu item
   obs_frontend_add_tools_menu_item("OBS Setup Test: Quickstart Profile",
                                    on_profile_test_menu_item_clicked, nullptr);
+
+  // Debug hooks for manual SettingsManager testing (no full UI yet).
+  obs_frontend_add_tools_menu_item("OBS Setup Test: Apply Settings",
+                                   on_apply_settings_menu_item_clicked,
+                                   nullptr);
+  obs_frontend_add_tools_menu_item("OBS Setup Test: Migrate to Advanced",
+                                   on_migrate_menu_item_clicked, nullptr);
 
   return true;
 }
