@@ -131,7 +131,7 @@ public:
    * — a mismatch is refused, never written. Unknown encoders are skipped
    * (logged), never guessed.
    *
-   * @return True only when the value was written and config_save()
+   * @return True only when the value was written and config_save_safe()
    * succeeded; false on missing profile config, missing/unrecognized
    * encoder, invalid preset, or save failure.
    */
@@ -140,7 +140,7 @@ public:
   /**
    * @brief Sets 48 kHz sample rate and stereo channels (Audio section).
    *
-   * @return True only when the values were written and config_save()
+   * @return True only when the values were written and config_save_safe()
    * succeeded. Note the running OBS session keeps its startup sample
    * rate until OBS restarts — a no-edit Settings > OK does not reset
    * the audio engine either (verified on OBS 30). The write landing is
@@ -158,7 +158,7 @@ public:
    * Video/AutoRemux=true — the exact keys OBS 31 reads (verified against
    * frontend/utility/SimpleOutput.cpp and real basic.ini fixtures).
    *
-   * @return True only when the values were written and config_save()
+   * @return True only when the values were written and config_save_safe()
    * succeeded.
    */
   bool applyRecordingSettings();
@@ -177,9 +177,9 @@ public:
    * LAST, after all targets are staged.
    *
    * Aborts the entire migration (no writes) on unknown/missing encoder or
-   * unverified preset mapping — never half-migrates. If config_save()
-   * fails after Output/Mode was staged in memory, the old mode value is
-   * restored before returning WriteFailed. Recording settings are
+   * unverified preset mapping — never half-migrates. If the atomic
+   * config_save_safe() fails after Output/Mode was staged in memory, the old
+   * mode value is restored before returning WriteFailed. Recording settings are
    * intentionally NOT migrated (no Advanced equivalent); on Success the
    * caller must show the modal directing the user to Settings → Output,
    * gated by needsRecordingModal(). The modal must also say the change

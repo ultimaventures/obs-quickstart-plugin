@@ -40,13 +40,15 @@ struct FakeConfig {
   std::map<std::pair<std::string, std::string>, uint64_t> uints;
   std::map<std::pair<std::string, std::string>, bool> bools;
   bool saveCalled = false;
-  bool saveFails = false; // when true, config_save() returns CONFIG_ERROR
+  bool safeSaveUsed = false; // set by the config_save_safe() stub
+  bool saveFails = false;    // when true, saves return CONFIG_ERROR
 
   void clear() {
     strings.clear();
     uints.clear();
     bools.clear();
     saveCalled = false;
+    safeSaveUsed = false;
     saveFails = false;
   }
 };
@@ -131,6 +133,24 @@ int config_save(config_t *config) {
   auto *fake = reinterpret_cast<FakeConfig *>(config);
   fake->saveCalled = true;
   return fake->saveFails ? CONFIG_ERROR : CONFIG_SUCCESS;
+}
+
+int config_save_safe(config_t *config, const char *, const char *) {
+  auto *fake = reinterpret_cast<FakeConfig *>(config);
+  fake->saveCalled = true;
+  fake->safeSaveUsed = true;
+  return fake->saveFails ? CONFIG_ERROR : CONFIG_SUCCESS;
+}
+
+// The fake has no registered defaults, so "has a user value" is exactly
+// "the key is present in one of the maps" — tests pre-populate the maps
+// to model user values.
+bool config_has_user_value(config_t *config, const char *section,
+                           const char *name) {
+  const auto *fake = reinterpret_cast<const FakeConfig *>(config);
+  const auto key = std::make_pair(std::string(section), std::string(name));
+  return fake->strings.count(key) || fake->uints.count(key) ||
+         fake->bools.count(key);
 }
 
 // Known encoder ids for the migrate validation. Unknown ids return null,
@@ -436,6 +456,39 @@ TEST_F(SettingsTest, ApplyRecordingSettingsSaveFailureRestores) {
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]), "Stream");
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecFormat2"}]), "mp4");
   EXPECT_FALSE((g_fakeConfig.bools[{"Video", "AutoRemux"}]));
+}
+
+// Absent keys must stay absent after a failed save: restore is driven by
+// config_has_user_value, so a key that only had a default (or nothing)
+// is removed rather than "restored" to an explicit value — the case that
+// used to write an explicit SampleRate of 0.
+
+TEST_F(SettingsTest, ApplyAudioSettingsSaveFailureLeavesAbsentKeysAbsent) {
+  g_fakeConfig.saveFails = true;
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyAudioSettings());
+  EXPECT_EQ(g_fakeConfig.uints.count({"Audio", "SampleRate"}), 0u);
+  EXPECT_EQ(g_fakeConfig.strings.count({"Audio", "ChannelSetup"}), 0u);
+}
+
+TEST_F(SettingsTest, ApplyRecordingSettingsSaveFailureLeavesAbsentKeysAbsent) {
+  g_fakeConfig.saveFails = true;
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyRecordingSettings());
+  EXPECT_EQ(g_fakeConfig.strings.count({"SimpleOutput", "RecQuality"}), 0u);
+  EXPECT_EQ(g_fakeConfig.strings.count({"SimpleOutput", "RecFormat2"}), 0u);
+  EXPECT_EQ(g_fakeConfig.bools.count({"Video", "AutoRemux"}), 0u);
+}
+
+// All saves go through the atomic config_save_safe (write-temp + rename),
+// the same call OBS's own UI makes for the profile config — a failed or
+// interrupted write must never truncate the user's basic.ini.
+
+TEST_F(SettingsTest, ApplyUsesAtomicSafeSave) {
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "x264";
+  settings::SettingsManager mgr;
+  EXPECT_TRUE(mgr.applyEncoderPreset("veryfast"));
+  EXPECT_TRUE(g_fakeConfig.safeSaveUsed);
 }
 
 TEST_F(SettingsTest, ApplyReturnsFalseWithNoProfileConfig) {
