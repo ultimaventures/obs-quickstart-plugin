@@ -169,9 +169,21 @@ bool SettingsManager::applyEncoderPreset(const std::string &preset) {
   }
   // NOTE: "preset"/"preset2" are encoder *property* names, not profile keys —
   // never write those. The key above is the verified Simple-mode profile key.
+  // Capture the old value first: if the save fails, restore it so the
+  // in-memory config is not left dirty (OBS's next save would otherwise
+  // persist a value this method reported as FAILED).
+  const char *oldPresetC =
+      config_get_string(config, "SimpleOutput", key.c_str());
+  const bool hadOldPreset = oldPresetC != nullptr;
+  const std::string oldPreset = hadOldPreset ? oldPresetC : "";
   config_set_string(config, "SimpleOutput", key.c_str(), preset.c_str());
   if (config_save(config) != CONFIG_SUCCESS) {
-    blog(LOG_ERROR, "[Settings] applyEncoderPreset: config_save failed");
+    if (hadOldPreset)
+      config_set_string(config, "SimpleOutput", key.c_str(), oldPreset.c_str());
+    else
+      config_remove_value(config, "SimpleOutput", key.c_str());
+    blog(LOG_ERROR, "[Settings] applyEncoderPreset: config_save failed; "
+                    "previous value restored");
     return false;
   }
   blog(LOG_INFO, "[Settings] Encoder preset: SimpleOutput/%s = %s", key.c_str(),
@@ -185,10 +197,22 @@ bool SettingsManager::applyAudioSettings() {
     blog(LOG_ERROR, "[Settings] applyAudioSettings: no profile config");
     return false;
   }
+  // Capture old values first; restore them if the save fails (see
+  // applyEncoderPreset for why a dirty in-memory value is a real bug).
+  const uint64_t oldRate = config_get_uint(config, "Audio", "SampleRate");
+  const char *oldSetupC = config_get_string(config, "Audio", "ChannelSetup");
+  const bool hadOldSetup = oldSetupC != nullptr;
+  const std::string oldSetup = hadOldSetup ? oldSetupC : "";
   config_set_uint(config, "Audio", "SampleRate", AUDIO_SAMPLE_RATE_HZ);
   config_set_string(config, "Audio", "ChannelSetup", AUDIO_CHANNEL_SETUP);
   if (config_save(config) != CONFIG_SUCCESS) {
-    blog(LOG_ERROR, "[Settings] applyAudioSettings: config_save failed");
+    config_set_uint(config, "Audio", "SampleRate", oldRate);
+    if (hadOldSetup)
+      config_set_string(config, "Audio", "ChannelSetup", oldSetup.c_str());
+    else
+      config_remove_value(config, "Audio", "ChannelSetup");
+    blog(LOG_ERROR, "[Settings] applyAudioSettings: config_save failed; "
+                    "previous values restored");
     return false;
   }
   blog(LOG_INFO, "[Settings] Audio: 48 kHz, Stereo");
@@ -205,11 +229,34 @@ bool SettingsManager::applyRecordingSettings() {
   // frontend/utility/SimpleOutput.cpp): RecQuality="HQ" is the stored value
   // for the UI's "Indistinguishable" label; RecFormat2 (not RecFormat);
   // Video/AutoRemux (not SimpleOutput/RecRemux).
+  // Capture old values first; restore them if the save fails (see
+  // applyEncoderPreset for why a dirty in-memory value is a real bug).
+  const char *oldQualityC =
+      config_get_string(config, "SimpleOutput", "RecQuality");
+  const bool hadOldQuality = oldQualityC != nullptr;
+  const std::string oldQuality = hadOldQuality ? oldQualityC : "";
+  const char *oldFormatC =
+      config_get_string(config, "SimpleOutput", "RecFormat2");
+  const bool hadOldFormat = oldFormatC != nullptr;
+  const std::string oldFormat = hadOldFormat ? oldFormatC : "";
+  const bool oldRemux = config_get_bool(config, "Video", "AutoRemux");
   config_set_string(config, "SimpleOutput", "RecQuality", RECORDING_QUALITY);
   config_set_string(config, "SimpleOutput", "RecFormat2", RECORDING_FORMAT);
   config_set_bool(config, "Video", "AutoRemux", true);
   if (config_save(config) != CONFIG_SUCCESS) {
-    blog(LOG_ERROR, "[Settings] applyRecordingSettings: config_save failed");
+    if (hadOldQuality)
+      config_set_string(config, "SimpleOutput", "RecQuality",
+                        oldQuality.c_str());
+    else
+      config_remove_value(config, "SimpleOutput", "RecQuality");
+    if (hadOldFormat)
+      config_set_string(config, "SimpleOutput", "RecFormat2",
+                        oldFormat.c_str());
+    else
+      config_remove_value(config, "SimpleOutput", "RecFormat2");
+    config_set_bool(config, "Video", "AutoRemux", oldRemux);
+    blog(LOG_ERROR, "[Settings] applyRecordingSettings: config_save failed; "
+                    "previous values restored");
     return false;
   }
   blog(LOG_INFO, "[Settings] Recording: quality HQ (Indistinguishable), "

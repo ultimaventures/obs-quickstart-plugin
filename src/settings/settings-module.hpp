@@ -142,8 +142,12 @@ public:
    *
    * @return True only when the values were written and config_save()
    * succeeded. Note the running OBS session keeps its startup sample
-   * rate until it restarts (or Settings is saved) — the write landing
-   * is what this return value vouches for.
+   * rate until OBS restarts — a no-edit Settings > OK does not reset
+   * the audio engine either (verified on OBS 30). The write landing is
+   * what this return value vouches for. On save failure the previous
+   * in-memory values are restored before returning false, so a later
+   * OBS save cannot persist values reported as FAILED (the same
+   * restore applies to all three apply* methods).
    */
   bool applyAudioSettings();
 
@@ -179,10 +183,12 @@ public:
    * intentionally NOT migrated (no Advanced equivalent); on Success the
    * caller must show the modal directing the user to Settings → Output,
    * gated by needsRecordingModal(). The modal must also say the change
-   * takes effect only after an OBS restart (or saving Settings): the
-   * running session keeps its Simple output handler until then —
-   * verified empirically on OBS 30 (post-migrate recordings still used
-   * the Simple handler). The audio bitrate (ABitrate) is
+   * takes effect only after an OBS restart: the running session keeps
+   * its Simple output handler until then — verified empirically on
+   * OBS 30 (post-migrate recordings still used the Simple handler, and
+   * a no-edit Settings > OK did not apply it either; OBS rebuilds its
+   * outputs only for categories the user actually changed). The audio
+   * bitrate (ABitrate) is
    * intentionally not migrated: its Advanced-mode destination is
    * unverified, and the encoder default is safe.
    */
