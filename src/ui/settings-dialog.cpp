@@ -226,12 +226,17 @@ void SettingsDialog::onApplyClicked() {
   if (allOk) {
     QMessageBox::information(this, "OBS Quickstart Settings",
                              "Settings applied:\n\n" + body);
-  } else {
-    QMessageBox::warning(this, "OBS Quickstart Settings",
-                         "Some settings could not be applied:\n\n" + body +
-                             "\n\nSee the log (Help > Log Files) for "
-                             "details.");
+    // Everything applied: nothing left to do in this dialog, so close
+    // it rather than leaving the user wondering whether more is
+    // expected of them. On any failure the dialog stays open (below)
+    // so the failed item can be retried or inspected.
+    accept();
+    return;
   }
+  QMessageBox::warning(this, "OBS Quickstart Settings",
+                       "Some settings could not be applied:\n\n" + body +
+                           "\n\nSee the log (Help > Log Files) for "
+                           "details.");
   refreshState();
 }
 
