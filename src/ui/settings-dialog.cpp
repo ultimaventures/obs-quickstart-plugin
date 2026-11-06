@@ -53,6 +53,22 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
       this);
   layout->addWidget(infoLabel);
 
+  // Why MKV: explanation, not a format picker — the quickstart promise
+  // is good defaults without homework, so the dialog states the
+  // reasoning (and the delete-the-MKV guidance) instead of offering a
+  // choice a new user has no basis to make.
+  auto *recordingNote = new QLabel(
+      "Why MKV? It protects your recording: if OBS or your computer "
+      "crashes mid-recording, everything up to that point is still "
+      "playable. When you stop, OBS automatically converts it to MP4, "
+      "which is easier to edit and upload. Once you've checked the MP4 "
+      "plays correctly, you can delete the MKV to save space — until "
+      "then it's your backup copy. You can change the recording format "
+      "anytime in Settings → Output.",
+      this);
+  recordingNote->setWordWrap(true);
+  layout->addWidget(recordingNote);
+
   auto *buttonLayout = new QHBoxLayout();
   m_applyButton = new QPushButton("Apply Settings", this);
   m_migrateButton = new QPushButton("Migrate to Advanced Mode", this);
