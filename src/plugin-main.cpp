@@ -17,18 +17,6 @@ OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
 /**
- * @brief Whether a profile name is one this plugin created ("Quickstart"
- * or a deduplicated "Quickstart_N").
- */
-static bool isQuickstartProfileName(const std::string &name) {
-  using namespace obs_setup::profile;
-  if (name == QUICKSTART_PROFILE_BASE_NAME)
-    return true;
-  const std::string prefix = std::string(QUICKSTART_PROFILE_BASE_NAME) + "_";
-  return name.rfind(prefix, 0) == 0;
-}
-
-/**
  * @brief Callback for the "Tools > OBS Quickstart" menu item — the
  * plugin's single entry point.
  *
@@ -52,10 +40,11 @@ static void on_quickstart_menu_item_clicked(void *private_data) {
 
   obs_setup::profile::ProfileManager manager;
 
-  char *currentRaw = obs_frontend_get_current_profile();
-  const std::string current(currentRaw ? currentRaw : "");
-  bfree(currentRaw);
-  if (isQuickstartProfileName(current)) {
+  // Managed detection is marker-based (ProfileManager), never
+  // name-based: a renamed Quickstart profile still counts, a user's
+  // own profile that merely happens to be named "Quickstart" does not,
+  // and neither does a duplicate of the managed profile.
+  if (manager.currentProfileIsManaged()) {
     obs_setup::ui::show_settings_dialog();
     return;
   }
