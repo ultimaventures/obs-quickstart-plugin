@@ -69,6 +69,30 @@ struct OutputConfigSnapshot {
 std::string deduplicatedName(const std::string &base,
                              const std::vector<std::string> &existingNames);
 
+/** Verdict of a managed-profile marker check (see ProfileManager). */
+enum class ManagedVerdict {
+  Managed,   ///< The current profile is the registered managed profile.
+  Renamed,   ///< It is the managed profile under a new name (the profile
+             ///< registered under its marker ID no longer exists).
+  NotManaged ///< No marker, unknown marker, or a duplicate: duplicating a
+             ///< managed profile copies its marker, but the original
+             ///< still exists, so the copy is NOT managed — a copy is
+             ///< the user's sandbox, not the plugin's profile.
+};
+
+/**
+ * @brief Pure decision behind ProfileManager::currentProfileIsManaged().
+ *
+ * @param registeredName Profile name the plugin registry holds for the
+ * current profile's marker ID (empty when the ID is unknown).
+ * @param currentName Name of the currently active profile.
+ * @param registeredProfileStillExists Whether a profile named
+ * `registeredName` still exists (distinguishes rename from duplicate).
+ */
+ManagedVerdict managedRegistryVerdict(const std::string &registeredName,
+                                      const std::string &currentName,
+                                      bool registeredProfileStillExists);
+
 /**
  * @brief Copies a directory tree, creating missing parent directories first.
  *
@@ -202,6 +226,22 @@ public:
   bool setupQuickstartProfile(std::string &outProfileName);
 
   /**
+   * @brief Whether the currently active profile is managed by this plugin.
+   *
+   * Detection is marker-based, never name-based: setupQuickstartProfile()
+   * stamps a unique ID into the created profile's own config and records
+   * ID -> profile name in the plugin's registry (managed-profiles.ini in
+   * the plugin config dir). A profile created by an older build has no
+   * marker and is simply not managed — there is deliberately no legacy
+   * name-match fallback. Renaming the managed profile is followed (the
+   * registered name no longer exists, so the registry is updated to the
+   * new name); duplicating it is not (the original still exists, so the
+   * duplicate — which physically copies the marker — stays unmanaged).
+   * The only side effect is the rename registry update.
+   */
+  bool currentProfileIsManaged();
+
+  /**
    * @brief True while any output is active: streaming, recording, the replay
    * buffer, or the virtual camera.
    *
@@ -229,6 +269,15 @@ private:
   bool switchToProfile(const std::string &name);
   bool deleteProfile(const std::string &name);
   bool rollbackProfileCreation(const std::string &createdProfile);
+
+  /** Stamps the managed marker (fresh ID) into the named, currently
+   *  active profile's config and registers ID -> name. */
+  bool stampManagedProfile(const std::string &profileName);
+  /** Reads the registry name recorded for a marker ID; false when the
+   *  registry or the ID is absent. */
+  bool readRegisteredName(const std::string &id, std::string &outName) const;
+  /** Creates or updates the registry entry for a marker ID. */
+  bool writeRegisteredName(const std::string &id, const std::string &name);
 
   std::string m_lastBackupPath;
   std::string m_backupRoot;

@@ -236,6 +236,37 @@ TEST(DeduplicatedName, ExhaustionReturnsEmpty) {
   EXPECT_TRUE(g_blogCalled);
 }
 
+// ---- managedRegistryVerdict ----
+// The marker/registry decision behind currentProfileIsManaged():
+// marker ID is registered to a profile name; the active profile carries
+// the marker. Rename vs duplicate is decided by whether the registered
+// name still exists.
+
+TEST(ManagedRegistryVerdict, ExactNameMatchIsManaged) {
+  EXPECT_EQ(profile::managedRegistryVerdict("Quickstart", "Quickstart", true),
+            profile::ManagedVerdict::Managed);
+}
+
+TEST(ManagedRegistryVerdict, UnknownIdIsNotManaged) {
+  EXPECT_EQ(profile::managedRegistryVerdict("", "Quickstart", false),
+            profile::ManagedVerdict::NotManaged);
+  EXPECT_EQ(profile::managedRegistryVerdict("Quickstart", "", false),
+            profile::ManagedVerdict::NotManaged);
+}
+
+TEST(ManagedRegistryVerdict, RegisteredNameGoneMeansRenamed) {
+  EXPECT_EQ(profile::managedRegistryVerdict("Quickstart", "My Stream", false),
+            profile::ManagedVerdict::Renamed);
+}
+
+TEST(ManagedRegistryVerdict, RegisteredNameStillThereMeansDuplicate) {
+  // A duplicate carries a copied marker but the original still exists:
+  // the duplicate is the user's sandbox and must NOT be managed.
+  EXPECT_EQ(
+      profile::managedRegistryVerdict("Quickstart", "Quickstart Copy", true),
+      profile::ManagedVerdict::NotManaged);
+}
+
 // ---- outputConfigChanged ----
 // The "before" snapshot is constructed directly; the "after" side comes from
 // the FakeConfig stubs above. No OBS calls.
