@@ -38,6 +38,7 @@ namespace {
 struct FakeConfig {
   std::map<std::pair<std::string, std::string>, std::string> strings;
   std::map<std::pair<std::string, std::string>, uint64_t> uints;
+  std::map<std::pair<std::string, std::string>, int64_t> ints;
   std::map<std::pair<std::string, std::string>, bool> bools;
   bool saveCalled = false;
   bool safeSaveUsed = false; // set by the config_save_safe() stub
@@ -46,6 +47,7 @@ struct FakeConfig {
   void clear() {
     strings.clear();
     uints.clear();
+    ints.clear();
     bools.clear();
     saveCalled = false;
     safeSaveUsed = false;
@@ -93,6 +95,26 @@ uint64_t config_get_uint(config_t *config, const char *section,
   return it != fake->uints.end() ? it->second : 0;
 }
 
+// config_get_int / config_set_int MUST be stubbed like the other
+// accessors: settings_tests links the real libobs, so an unstubbed
+// accessor would run libobs code on the fake config pointer —
+// undefined behaviour that variously returned garbage, failed
+// unrelated-looking tests, or hung outright (first observed when the
+// conservative-fallback tests exercised the int capture path).
+int64_t config_get_int(config_t *config, const char *section,
+                       const char *name) {
+  const auto *fake = reinterpret_cast<const FakeConfig *>(config);
+  const auto it =
+      fake->ints.find(std::make_pair(std::string(section), std::string(name)));
+  return it != fake->ints.end() ? it->second : 0;
+}
+
+void config_set_int(config_t *config, const char *section, const char *name,
+                    int64_t value) {
+  auto *fake = reinterpret_cast<FakeConfig *>(config);
+  fake->ints[std::make_pair(std::string(section), std::string(name))] = value;
+}
+
 void config_set_string(config_t *config, const char *section, const char *name,
                        const char *value) {
   auto *fake = reinterpret_cast<FakeConfig *>(config);
@@ -125,6 +147,7 @@ bool config_remove_value(config_t *config, const char *section,
   const auto key = std::make_pair(std::string(section), std::string(name));
   fake->strings.erase(key);
   fake->uints.erase(key);
+  fake->ints.erase(key);
   fake->bools.erase(key);
   return true;
 }
@@ -150,7 +173,7 @@ bool config_has_user_value(config_t *config, const char *section,
   const auto *fake = reinterpret_cast<const FakeConfig *>(config);
   const auto key = std::make_pair(std::string(section), std::string(name));
   return fake->strings.count(key) || fake->uints.count(key) ||
-         fake->bools.count(key);
+         fake->ints.count(key) || fake->bools.count(key);
 }
 
 // Known encoder ids for the migrate validation. Unknown ids return null,
@@ -320,6 +343,9 @@ class SettingsTest : public ::testing::Test {
 protected:
   void SetUp() override {
     g_fakeConfig.clear();
+    // Fixtures model Simple-mode profiles (the apply* methods'
+    // domain); tests for other modes override this after SetUp.
+    g_fakeConfig.strings[{"Output", "Mode"}] = "Simple";
     g_configAvailable = true;
     sandbox_ = fs::temp_directory_path() / "quickstart-settings-tests";
     std::error_code ec;
@@ -618,4 +644,76 @@ TEST_F(SettingsTest, MigrateSkipsMissingBitrate) {
   const std::string content = readFile(sandbox_ / "streamEncoder.json");
   EXPECT_NE(content.find("p5"), std::string::npos);
   EXPECT_EQ(content.find("bitrate"), std::string::npos);
+}
+
+// ---- applyConservativeFallback ----
+
+TEST_F(SettingsTest, FallbackAppliesToSimpleFpsCommonProfile) {
+  g_fakeConfig.strings[{"Video", "FPSCommon"}] = "60";
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "nvenc";
+  settings::SettingsManager mgr;
+  EXPECT_TRUE(mgr.applyConservativeFallback());
+  EXPECT_EQ((g_fakeConfig.uints[{"Video", "OutputCX"}]), 1280u);
+  EXPECT_EQ((g_fakeConfig.uints[{"Video", "OutputCY"}]), 720u);
+  EXPECT_EQ((g_fakeConfig.strings[{"Video", "FPSCommon"}]), "30");
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}]), "x264");
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "Preset"}]), "ultrafast");
+  EXPECT_TRUE(g_fakeConfig.saveCalled);
+}
+
+TEST_F(SettingsTest, FallbackRefusesMissingMode) {
+  g_fakeConfig.strings.erase({"Output", "Mode"});
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyConservativeFallback());
+  EXPECT_FALSE(g_fakeConfig.saveCalled);
+  EXPECT_EQ(g_fakeConfig.uints.count({"Video", "OutputCX"}), 0u);
+}
+
+TEST_F(SettingsTest, FallbackRefusesAdvancedMode) {
+  g_fakeConfig.strings[{"Output", "Mode"}] = "Advanced";
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyConservativeFallback());
+  EXPECT_FALSE(g_fakeConfig.saveCalled);
+}
+
+TEST_F(SettingsTest, FallbackRefusesCustomFpsProfile) {
+  g_fakeConfig.uints[{"Video", "FPSNum"}] = 30000;
+  g_fakeConfig.uints[{"Video", "FPSDen"}] = 1001;
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyConservativeFallback());
+  EXPECT_FALSE(g_fakeConfig.saveCalled);
+  EXPECT_EQ(g_fakeConfig.strings.count({"Video", "FPSCommon"}), 0u);
+}
+
+TEST_F(SettingsTest, FallbackRestoresEverythingOnSaveFailure) {
+  g_fakeConfig.uints[{"Video", "OutputCX"}] = 1920;
+  g_fakeConfig.uints[{"Video", "OutputCY"}] = 1080;
+  g_fakeConfig.strings[{"Video", "FPSCommon"}] = "60";
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "nvenc";
+  g_fakeConfig.saveFails = true;
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyConservativeFallback());
+  EXPECT_EQ((g_fakeConfig.uints[{"Video", "OutputCX"}]), 1920u);
+  EXPECT_EQ((g_fakeConfig.uints[{"Video", "OutputCY"}]), 1080u);
+  EXPECT_EQ((g_fakeConfig.strings[{"Video", "FPSCommon"}]), "60");
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}]), "nvenc");
+}
+
+// ---- applyEncoderPreset mode verification ----
+
+TEST_F(SettingsTest, ApplyEncoderPresetRefusesAdvancedProfile) {
+  g_fakeConfig.strings[{"Output", "Mode"}] = "Advanced";
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "nvenc";
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyEncoderPreset("p5"));
+  EXPECT_FALSE(g_fakeConfig.saveCalled);
+  EXPECT_EQ(g_fakeConfig.strings.count({"SimpleOutput", "NVENCPreset2"}), 0u);
+}
+
+TEST_F(SettingsTest, ApplyEncoderPresetRefusesMissingMode) {
+  g_fakeConfig.strings.erase({"Output", "Mode"});
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "x264";
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyEncoderPreset("veryfast"));
+  EXPECT_FALSE(g_fakeConfig.saveCalled);
 }

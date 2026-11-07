@@ -131,6 +131,17 @@ bool SettingsManager::applyEncoderPreset(const std::string &preset) {
     blog(LOG_ERROR, "[Settings] applyEncoderPreset: no profile config");
     return false;
   }
+  // The preset keys this writes are Simple-mode keys. On an Advanced
+  // profile they are dormant — the write would "succeed" while the
+  // active encoder never sees it, and the caller would report a preset
+  // change that did not happen. Verify the mode the same way
+  // migrateToAdvancedMode does: a missing mode is NOT Simple.
+  const char *modeC = config_get_string(config, "Output", "Mode");
+  if (!modeC || std::string(modeC) != "Simple") {
+    blog(LOG_ERROR, "[Settings] applyEncoderPreset: profile is not in "
+                    "Simple mode; preset not applied");
+    return false;
+  }
   const char *simpleEncoderC =
       config_get_string(config, "SimpleOutput", "StreamEncoder");
   if (!simpleEncoderC || !*simpleEncoderC) {
@@ -288,9 +299,22 @@ bool SettingsManager::applyConservativeFallback() {
     return false;
   }
   const char *modeC = config_get_string(config, "Output", "Mode");
-  if (modeC && std::string(modeC) != "Simple") {
+  if (!modeC || std::string(modeC) != "Simple") {
     blog(LOG_ERROR, "[Settings] applyConservativeFallback: profile is not in "
-                    "Simple mode; fallback refused");
+                    "Simple mode (or mode is unset); fallback refused");
+    return false;
+  }
+  // The fallback expresses frame rate through FPSCommon only. A
+  // profile carrying user-set FPSNum/FPSDen values uses custom frame
+  // timing those values govern; writing FPSCommon alongside them
+  // would leave the profile in a state this function cannot honestly
+  // describe as 720p30. Detect and refuse — custom-FPS profiles are
+  // out of the fallback's scope, and undetected out-of-scope is the
+  // one unacceptable outcome.
+  if (config_has_user_value(config, "Video", "FPSNum") ||
+      config_has_user_value(config, "Video", "FPSDen")) {
+    blog(LOG_ERROR, "[Settings] applyConservativeFallback: profile uses "
+                    "custom FPS (FPSNum/FPSDen); fallback refused");
     return false;
   }
 
@@ -303,7 +327,8 @@ bool SettingsManager::applyConservativeFallback() {
     bool hadValue;
     std::string oldString;
     long long oldNumber = 0;
-    bool isNumber = false;
+    uint64_t oldUint = 0;
+    enum class Kind { String, Int, Uint } kind = Kind::String;
   };
   const std::string x264PresetKey = presetKeyForEncoder("obs_x264");
   std::vector<Captured> captured;
@@ -311,16 +336,36 @@ bool SettingsManager::applyConservativeFallback() {
     const char *old = config_get_string(config, section, key);
     captured.push_back({section, key,
                         config_has_user_value(config, section, key),
-                        old ? old : "", 0, false});
+                        old ? old : "", 0, 0, Captured::Kind::String});
   };
   auto captureNumber = [&](const char *section, const char *key) {
-    Captured c{section, key, config_has_user_value(config, section, key),
-               "",      0,   true};
+    Captured c{section,
+               key,
+               config_has_user_value(config, section, key),
+               "",
+               0,
+               0,
+               Captured::Kind::Int};
     c.oldNumber = config_get_int(config, section, key);
     captured.push_back(c);
   };
-  captureNumber("Video", "OutputCX");
-  captureNumber("Video", "OutputCY");
+  auto captureUint = [&](const char *section, const char *key) {
+    Captured c{section,
+               key,
+               config_has_user_value(config, section, key),
+               "",
+               0,
+               0,
+               Captured::Kind::Uint};
+    c.oldUint = config_get_uint(config, section, key);
+    captured.push_back(c);
+  };
+  // Capture with the same accessor type the write uses: OutputCX/CY
+  // are written with config_set_uint, so they are captured and
+  // restored as uints (an int round-trip would be the wrong discipline
+  // for a function whose contract is exact restore).
+  captureUint("Video", "OutputCX");
+  captureUint("Video", "OutputCY");
   captureString("Video", "FPSCommon");
   captureNumber("SimpleOutput", "VBitrate");
   captureString("SimpleOutput", "StreamEncoder");
@@ -341,8 +386,10 @@ bool SettingsManager::applyConservativeFallback() {
     for (const Captured &c : captured) {
       if (!c.hadValue)
         config_remove_value(config, c.section, c.key);
-      else if (c.isNumber)
+      else if (c.kind == Captured::Kind::Int)
         config_set_int(config, c.section, c.key, c.oldNumber);
+      else if (c.kind == Captured::Kind::Uint)
+        config_set_uint(config, c.section, c.key, c.oldUint);
       else
         config_set_string(config, c.section, c.key, c.oldString.c_str());
     }
