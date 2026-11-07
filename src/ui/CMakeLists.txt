@@ -3,4 +3,5 @@ target_sources(
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/ui-module.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/settings-dialog.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/stability-dialog.cpp
 )

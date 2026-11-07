@@ -131,15 +131,35 @@ static void on_quickstart_menu_item_clicked(void *private_data) {
   }
 }
 
+/**
+ * @brief Callback for "Tools > OBS Quickstart: Run stability check".
+ *
+ * The standalone stability test (architecture §7): a 30-second local
+ * recording that validates the active profile's setup and steps the
+ * encoder preset down if the PC can't keep up. Deliberately separate
+ * from the setup entry point above — it is a re-runnable utility
+ * (after hardware changes, or when a stream feels off), not part of
+ * first-time setup. Runs on whatever profile is active: the test
+ * measures the current configuration, and its profile-creation safety
+ * rules don't apply because it creates nothing.
+ */
+static void on_stability_check_menu_item_clicked(void *private_data) {
+  (void)private_data;
+  obs_setup::ui::show_stability_dialog();
+}
+
 bool obs_module_load(void) {
   obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
 
-  // Single entry point: profile setup, then the settings dialog. The
+  // Setup entry point: profile setup, then the settings dialog. The
   // per-sprint test items (Hello World, profile-only, settings-only)
   // were scaffolding and are gone; the modules behind them are
   // unchanged and still composed by this flow.
   obs_frontend_add_tools_menu_item("OBS Quickstart",
                                    on_quickstart_menu_item_clicked, nullptr);
+  obs_frontend_add_tools_menu_item("OBS Quickstart: Run stability check",
+                                   on_stability_check_menu_item_clicked,
+                                   nullptr);
 
   return true;
 }

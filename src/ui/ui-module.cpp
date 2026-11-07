@@ -4,6 +4,7 @@
 #include <obs-frontend-api.h>
 
 #include "settings-dialog.hpp"
+#include "stability-dialog.hpp"
 
 namespace obs_setup {
 namespace ui {
@@ -19,6 +20,14 @@ void show_settings_dialog() {
   QMainWindow *main_window =
       static_cast<QMainWindow *>(obs_frontend_get_main_window());
   SettingsDialog dialog(main_window);
+  dialog.exec();
+}
+
+void show_stability_dialog() {
+  QMainWindow *main_window =
+      static_cast<QMainWindow *>(obs_frontend_get_main_window());
+  StabilityDialog dialog(main_window);
+  dialog.startCheck();
   dialog.exec();
 }
 

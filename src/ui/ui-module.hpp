@@ -17,6 +17,15 @@ void show_hello_world_dialog();
  */
 void show_settings_dialog();
 
+/**
+ * @brief Shows the stability-check dialog (modal) and starts the check.
+ *
+ * The standalone home of the 30-second recording test (architecture
+ * §7); the Sprint 6 wizard will run the same monitor as its final
+ * validation step. Must be called on the GUI thread.
+ */
+void show_stability_dialog();
+
 } // namespace ui
 } // namespace obs_setup
 
