@@ -20,6 +20,13 @@ inline constexpr const char *AUDIO_CHANNEL_SETUP = "Stereo";
 inline constexpr const char *RECORDING_QUALITY = "HQ";
 /** Recording container format. */
 inline constexpr const char *RECORDING_FORMAT = "mkv";
+/** Conservative fallback (architecture §7): 720p30 at 2500 kbps with
+ *  x264 ultrafast — offered, never auto-applied, when the stability
+ *  test still fails after its ladder retries. */
+inline constexpr uint32_t FALLBACK_OUTPUT_WIDTH = 1280;
+inline constexpr uint32_t FALLBACK_OUTPUT_HEIGHT = 720;
+inline constexpr const char *FALLBACK_FPS_COMMON = "30";
+inline constexpr int FALLBACK_VIDEO_BITRATE_KBPS = 2500;
 
 /**
  * @brief Maps a Simple-mode encoder UI string to its libobs encoder id.
@@ -162,6 +169,25 @@ public:
    * succeeded.
    */
   bool applyRecordingSettings();
+
+  /**
+   * @brief Applies the conservative fallback: 720p30 output, 2500 kbps,
+   * x264 at ultrafast.
+   *
+   * Writes Video/OutputCX, Video/OutputCY, Video/FPSCommon,
+   * SimpleOutput/VBitrate, SimpleOutput/StreamEncoder="x264" and the
+   * x264 preset key — in ONE config_save_safe() with the same
+   * capture-and-restore discipline as the other apply* methods, so the
+   * fallback lands whole or not at all. Simple mode only: an
+   * Advanced-mode profile is refused (its outputs are the user's own
+   * to manage). Profiles using custom FPSNum/FPSDen instead of
+   * FPSCommon are out of scope (wizard-produced profiles use
+   * FPSCommon). This is the stability test's last-resort OFFER — the
+   * caller must have the user's explicit confirmation before calling.
+   *
+   * @return True only when every value was written and saved.
+   */
+  bool applyConservativeFallback();
 
   /**
    * @brief Migrates Simple-mode streaming settings to Advanced mode.

@@ -281,6 +281,80 @@ bool SettingsManager::applyRecordingSettings() {
   return true;
 }
 
+bool SettingsManager::applyConservativeFallback() {
+  config_t *config = obs_frontend_get_profile_config();
+  if (!config) {
+    blog(LOG_ERROR, "[Settings] applyConservativeFallback: no profile config");
+    return false;
+  }
+  const char *modeC = config_get_string(config, "Output", "Mode");
+  if (modeC && std::string(modeC) != "Simple") {
+    blog(LOG_ERROR, "[Settings] applyConservativeFallback: profile is not in "
+                    "Simple mode; fallback refused");
+    return false;
+  }
+
+  // Capture every value this write touches; restore all of them if
+  // the save fails (the apply* discipline: a failed save must not
+  // leave new values live in memory for a later OBS save to persist).
+  struct Captured {
+    const char *section;
+    const char *key;
+    bool hadValue;
+    std::string oldString;
+    long long oldNumber = 0;
+    bool isNumber = false;
+  };
+  const std::string x264PresetKey = presetKeyForEncoder("obs_x264");
+  std::vector<Captured> captured;
+  auto captureString = [&](const char *section, const char *key) {
+    const char *old = config_get_string(config, section, key);
+    captured.push_back({section, key,
+                        config_has_user_value(config, section, key),
+                        old ? old : "", 0, false});
+  };
+  auto captureNumber = [&](const char *section, const char *key) {
+    Captured c{section, key, config_has_user_value(config, section, key),
+               "",      0,   true};
+    c.oldNumber = config_get_int(config, section, key);
+    captured.push_back(c);
+  };
+  captureNumber("Video", "OutputCX");
+  captureNumber("Video", "OutputCY");
+  captureString("Video", "FPSCommon");
+  captureNumber("SimpleOutput", "VBitrate");
+  captureString("SimpleOutput", "StreamEncoder");
+  captureString("SimpleOutput", x264PresetKey.c_str());
+
+  config_set_uint(config, "Video", "OutputCX", FALLBACK_OUTPUT_WIDTH);
+  config_set_uint(config, "Video", "OutputCY", FALLBACK_OUTPUT_HEIGHT);
+  config_set_string(config, "Video", "FPSCommon", FALLBACK_FPS_COMMON);
+  config_set_int(config, "SimpleOutput", "VBitrate",
+                 FALLBACK_VIDEO_BITRATE_KBPS);
+  config_set_string(config, "SimpleOutput", "StreamEncoder", "x264");
+  // "ultrafast" is a verified x264 preset (presetsFor) and the bottom
+  // of the stability ladder — the fallback pairs it with the encoder
+  // switch above so the two always land together.
+  config_set_string(config, "SimpleOutput", x264PresetKey.c_str(), "ultrafast");
+
+  if (config_save_safe(config, "tmp", nullptr) != CONFIG_SUCCESS) {
+    for (const Captured &c : captured) {
+      if (!c.hadValue)
+        config_remove_value(config, c.section, c.key);
+      else if (c.isNumber)
+        config_set_int(config, c.section, c.key, c.oldNumber);
+      else
+        config_set_string(config, c.section, c.key, c.oldString.c_str());
+    }
+    blog(LOG_ERROR, "[Settings] applyConservativeFallback: config_save_safe "
+                    "failed; previous values restored");
+    return false;
+  }
+  blog(LOG_INFO, "[Settings] Conservative fallback applied: 720p30, 2500 "
+                 "kbps, x264 ultrafast");
+  return true;
+}
+
 MigrateResult SettingsManager::migrateToAdvancedMode() {
   m_needsRecordingModal = false;
 
