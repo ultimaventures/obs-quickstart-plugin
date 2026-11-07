@@ -203,8 +203,7 @@ void SettingsDialog::onApplyClicked() {
               "• Audio: %2\n"
               "• Recording: %3\n\n"
               "The preset applies to your next stream or recording. The "
-              "audio change (48 kHz) takes effect after you restart OBS, "
-              "or open Settings and click OK.")
+              "audio change (48 kHz) takes effect after you restart OBS.")
           .arg(presetLine, audioOk ? "48 kHz, Stereo" : "FAILED",
                recordingOk ? "Indistinguishable quality, MKV, auto-remux on"
                            : "FAILED");
@@ -246,8 +245,8 @@ void SettingsDialog::onMigrateClicked() {
           "Migrated to Advanced mode.\n\n"
           "Recording settings were NOT migrated (no Advanced equivalent) — "
           "please set them manually in Settings > Output.\n\n"
-          "This takes effect after you restart OBS, or open Settings and "
-          "click OK. Until then, this session keeps using Simple output.");
+          "This takes effect after you restart OBS. Until then, this "
+          "session keeps using Simple output.");
     }
     break;
   case MigrateResult::NotSimpleMode:
