@@ -197,6 +197,10 @@ void SettingsDialog::refreshState() {
   } else {
     m_presetNote->setText("");
   }
+
+  // The note's word-wrapped text changes the dialog's ideal height; resize
+  // so it never overlaps the info label below it.
+  adjustSize();
 }
 
 void SettingsDialog::onApplyClicked() {
