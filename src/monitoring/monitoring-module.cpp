@@ -33,8 +33,23 @@ Stability evaluateStability(const Metrics &metrics) {
                          static_cast<double>(metrics.totalFrames);
   result.skippedPercent = 100.0 * static_cast<double>(metrics.skippedFrames) /
                           static_cast<double>(metrics.totalFrames);
-  result.stable = result.laggedPercent <= MAX_LAGGED_FRAME_PERCENT &&
-                  result.skippedPercent <= MAX_SKIPPED_FRAME_PERCENT;
+  if (metrics.durationSeconds > 0.0 && metrics.targetFps > 0.0) {
+    const double expected = metrics.durationSeconds * metrics.targetFps;
+    result.frameRateDelivered = static_cast<double>(metrics.totalFrames) >=
+                                MIN_DELIVERED_FRAME_RATIO * expected;
+  }
+  if (result.laggedPercent <= MAX_LAGGED_FRAME_PERCENT &&
+      result.skippedPercent <= MAX_SKIPPED_FRAME_PERCENT &&
+      result.frameRateDelivered) {
+    result.tier = Tier::Stable;
+  } else if (result.laggedPercent <= MARGINAL_LAGGED_FRAME_PERCENT &&
+             result.skippedPercent <= MARGINAL_SKIPPED_FRAME_PERCENT &&
+             result.frameRateDelivered) {
+    result.tier = Tier::Marginal;
+  } else {
+    result.tier = Tier::Unstable;
+  }
+  result.stable = result.tier == Tier::Stable;
   return result;
 }
 
@@ -91,6 +106,87 @@ int maxAttempts(EncoderFamily family) {
     return 1;
   }
   return 1;
+}
+
+int attemptsAvailable(EncoderFamily family, const std::string &currentPreset) {
+  int attempts = 1;
+  std::string preset = currentPreset;
+  while (attempts < maxAttempts(family)) {
+    const auto step = nextLadderStep(family, preset);
+    if (!step.has_value())
+      break;
+    preset = *step;
+    ++attempts;
+  }
+  return attempts;
+}
+
+bool recordingPresetGovernedByConfig(EncoderFamily family,
+                                     const std::string &recQuality) {
+  switch (family) {
+  case EncoderFamily::NVENC:
+    // Governed whenever the NVENC encoder is the recording encoder:
+    // "Stream" reuses the instance; HQ/FQ/MQ build a separate NVENC
+    // instance whose preset comes from the same profile value.
+    return recQuality == "Stream" || recQuality == "HQ" || recQuality == "FQ" ||
+           recQuality == "MQ";
+  case EncoderFamily::X264:
+    // Only "Stream" (shared instance). HQ/FQ/MQ hardcode the
+    // recording preset to "veryfast" in OBS's code.
+    return recQuality == "Stream";
+  case EncoderFamily::QSV:
+  case EncoderFamily::AMF:
+  case EncoderFamily::VideoToolbox:
+  case EncoderFamily::Unknown:
+    return false;
+  }
+  return false;
+}
+
+SettleAction SettleTracker::observe(const SettleObservation &observation) {
+  if (m_done)
+    return m_final;
+  ++m_polls;
+  const bool quiet = !observation.recordingActive && !observation.filesChanged;
+  if (quiet)
+    ++m_quietPolls;
+  else
+    m_quietPolls = 0;
+
+  if (observation.cancelRequested) {
+    // A cancel ends the wait immediately, but deletion still requires
+    // the full quiet-poll evidence — a single quiet second is exactly
+    // the gap a remux can hide in. Anything less leaves the files.
+    m_done = true;
+    m_final = m_quietPolls >= SETTLE_REQUIRED_QUIET_POLLS
+                  ? SettleAction::DeleteNow
+                  : SettleAction::LeaveFiles;
+    return m_final;
+  }
+  if (m_quietPolls >= SETTLE_REQUIRED_QUIET_POLLS) {
+    m_done = true;
+    m_final = SettleAction::DeleteNow;
+    return m_final;
+  }
+  if (m_polls > SETTLE_MAX_POLLS) {
+    // Budget exhausted: leave the files and say where they are. A
+    // settle timeout must never become a delete-anyway.
+    m_done = true;
+    m_final = SettleAction::LeaveFiles;
+    return m_final;
+  }
+  return SettleAction::Wait;
+}
+
+CleanupPlan planCleanup(bool fallbackMode, bool haveRecordingPath,
+                        bool recordingExistedAtStart,
+                        bool remuxSiblingExistedAtStart) {
+  CleanupPlan plan;
+  if (fallbackMode || !haveRecordingPath)
+    return plan; // Identity unproven: report, never guess-delete.
+  plan.deleteRecording = !recordingExistedAtStart;
+  plan.deleteRemuxSibling = !remuxSiblingExistedAtStart;
+  return plan;
 }
 
 } // namespace monitoring
