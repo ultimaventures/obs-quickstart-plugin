@@ -14,6 +14,7 @@
 #include <QMetaObject>
 #include <QObject>
 #include <QThread>
+#include <QUuid>
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
@@ -65,6 +66,16 @@ std::string joinNames(const std::vector<std::string> &names) {
   return joined;
 }
 
+/** Path of the managed-profile registry inside the plugin config dir. */
+std::string managedRegistryPath() {
+  char *raw = obs_module_config_path("managed-profiles.ini");
+  if (!raw)
+    return std::string();
+  const std::string path(raw);
+  bfree(raw);
+  return path;
+}
+
 } // namespace
 
 std::string deduplicatedName(const std::string &base,
@@ -85,6 +96,21 @@ std::string deduplicatedName(const std::string &base,
 
   blog(LOG_ERROR, "[Profile] No free name variant for '%s'", base.c_str());
   return std::string();
+}
+
+ManagedVerdict managedRegistryVerdict(const std::string &registeredName,
+                                      const std::string &currentName,
+                                      bool registeredProfileStillExists) {
+  if (registeredName.empty() || currentName.empty())
+    return ManagedVerdict::NotManaged;
+  if (registeredName == currentName)
+    return ManagedVerdict::Managed;
+  // The marker ID is registered to a different name than the active
+  // profile's. If that name is gone, the managed profile itself was
+  // renamed; if it still exists, this profile is a duplicate carrying a
+  // copied marker, and a duplicate is the user's sandbox — not managed.
+  return registeredProfileStillExists ? ManagedVerdict::NotManaged
+                                      : ManagedVerdict::Renamed;
 }
 
 bool copyDirectoryTree(const std::string &source,
@@ -121,6 +147,17 @@ bool copyDirectoryTree(const std::string &source,
     return false;
   }
   return true;
+}
+
+std::filesystem::path backupDestinationFor(const std::string &backupsDir,
+                                           const std::string &profileName,
+                                           const std::string &stamp) {
+  // Every component built from OBS strings goes through u8path: operator/
+  // with a plain std::string would decode with the Windows ANSI code page,
+  // mangling non-ASCII profile names (e.g. "Café"). OBS hands out UTF-8;
+  // keep it UTF-8 all the way down.
+  return std::filesystem::u8path(backupsDir) /
+         std::filesystem::u8path(profileName + "_" + stamp);
 }
 
 std::vector<std::string> ProfileManager::listProfiles() const {
@@ -265,13 +302,25 @@ bool ProfileManager::backupExistingProfile() {
   }
 
   const std::string stamp = std::to_string(std::time(nullptr));
-  // Every component built from OBS strings goes through u8path: operator/
-  // with a plain std::string would decode profileName with the Windows ANSI
-  // code page, mangling non-ASCII profile names (e.g. "Café"). OBS hands out
-  // UTF-8; keep it UTF-8 all the way down.
+  // Backups live in the plugin config dir, not the profiles dir: OBS
+  // enumerates the profiles directory, and a quickstart-backups/ folder
+  // there risks appearing as a phantom profile. obs_module_config_path()
+  // resolves <obs_config>/plugin_config/<module>/quickstart-backups/ from
+  // OBS's own config base, so it respects portable mode (QStandardPaths
+  // would write to the real user AppData even in portable mode). A NULL
+  // return (config dir unset) fails the backup loudly — never silently fall
+  // back to the profiles dir.
+  char *rawBase = obs_module_config_path("quickstart-backups");
+  if (!rawBase) {
+    blog(LOG_ERROR,
+         "[Profile] Could not resolve plugin config dir; backup refused");
+    return false;
+  }
+  const std::string backupsDir(rawBase); // UTF-8 bytes
+  bfree(rawBase);
+
   const std::filesystem::path dest =
-      std::filesystem::u8path(profilePath).parent_path() /
-      "quickstart-backups" / std::filesystem::u8path(profileName + "_" + stamp);
+      backupDestinationFor(backupsDir, profileName, stamp);
 
   blog(LOG_INFO, "[Profile] Backing up profile '%s' to '%s'",
        profileName.c_str(), dest.u8string().c_str());
@@ -516,6 +565,118 @@ std::vector<std::string> ProfileManager::activeOutputs() const {
 
 bool ProfileManager::isBusy() const { return !activeOutputs().empty(); }
 
+bool ProfileManager::readRegisteredName(const std::string &id,
+                                        std::string &outName) const {
+  const std::string path = managedRegistryPath();
+  if (path.empty())
+    return false;
+  config_t *registry = nullptr;
+  if (config_open(&registry, path.c_str(), CONFIG_OPEN_EXISTING) !=
+          CONFIG_SUCCESS ||
+      !registry)
+    return false;
+  const char *name = config_get_string(registry, "Profiles", id.c_str());
+  const bool found = name && *name;
+  if (found)
+    outName = name;
+  config_close(registry);
+  return found;
+}
+
+bool ProfileManager::writeRegisteredName(const std::string &id,
+                                         const std::string &name) {
+  const std::string path = managedRegistryPath();
+  if (path.empty())
+    return false;
+  config_t *registry = nullptr;
+  if (config_open(&registry, path.c_str(), CONFIG_OPEN_ALWAYS) !=
+          CONFIG_SUCCESS ||
+      !registry) {
+    blog(LOG_ERROR,
+         "[Profile] Could not open managed-profile registry "
+         "at '%s'",
+         path.c_str());
+    return false;
+  }
+  config_set_string(registry, "Profiles", id.c_str(), name.c_str());
+  const bool ok = config_save_safe(registry, "tmp", nullptr) == CONFIG_SUCCESS;
+  if (!ok)
+    blog(LOG_ERROR, "[Profile] Could not save managed-profile registry");
+  config_close(registry);
+  return ok;
+}
+
+bool ProfileManager::stampManagedProfile(const std::string &profileName) {
+  // The marker goes into the profile's OWN config, which is only
+  // reachable via the frontend while that profile is active — and
+  // profile creation activates synchronously, so verify we are stamping
+  // the profile we just created, not whatever was active before.
+  if (currentProfileName() != profileName) {
+    blog(LOG_ERROR,
+         "[Profile] Refusing to stamp marker: active profile is not '%s'",
+         profileName.c_str());
+    return false;
+  }
+  config_t *config = obs_frontend_get_profile_config();
+  if (!config)
+    return false;
+  const std::string id =
+      QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+  config_set_string(config, "QuickstartPlugin", "ProfileId", id.c_str());
+  // Save immediately: a later duplicate of this profile must copy the
+  // marker from disk (that is how duplicates are detected as copies).
+  if (config_save_safe(config, "tmp", nullptr) != CONFIG_SUCCESS) {
+    blog(LOG_ERROR, "[Profile] Could not save profile config after "
+                    "stamping the managed marker");
+    return false;
+  }
+  if (!writeRegisteredName(id, profileName))
+    return false;
+  blog(LOG_INFO, "[Profile] Stamped managed marker on profile '%s'",
+       profileName.c_str());
+  return true;
+}
+
+bool ProfileManager::currentProfileIsManaged() {
+  config_t *config = obs_frontend_get_profile_config();
+  if (!config)
+    return false;
+  const char *idRaw =
+      config_get_string(config, "QuickstartPlugin", "ProfileId");
+  if (!idRaw || !*idRaw)
+    return false;
+  const std::string id(idRaw);
+
+  std::string registered;
+  if (!readRegisteredName(id, registered))
+    return false; // Unknown ID: imported profile or lost registry.
+
+  const std::string current = currentProfileName();
+  bool registeredExists = false;
+  if (registered != current) {
+    const std::vector<std::string> profiles = listProfiles();
+    registeredExists = std::find(profiles.begin(), profiles.end(),
+                                 registered) != profiles.end();
+  }
+
+  switch (managedRegistryVerdict(registered, current, registeredExists)) {
+  case ManagedVerdict::Managed:
+    return true;
+  case ManagedVerdict::Renamed:
+    // Follow the rename. If the registry update fails we simply
+    // re-detect the rename on the next check; the verdict stands.
+    writeRegisteredName(id, current);
+    blog(LOG_INFO,
+         "[Profile] Managed profile renamed '%s' -> '%s'; registry "
+         "updated",
+         registered.c_str(), current.c_str());
+    return true;
+  case ManagedVerdict::NotManaged:
+    return false;
+  }
+  return false;
+}
+
 bool ProfileManager::setupQuickstartProfile(std::string &outProfileName) {
   if (!checkGuiThread("setupQuickstartProfile"))
     return false;
@@ -552,6 +713,16 @@ bool ProfileManager::setupQuickstartProfile(std::string &outProfileName) {
       createSceneCollection(QUICKSTART_SCENE_COLLECTION_BASE_NAME);
   if (!collectionName) {
     blog(LOG_ERROR, "[Profile] Scene collection creation failed, rolling back");
+    rollbackProfileCreation(*profileName);
+    return false;
+  }
+
+  // A plugin-created profile must carry its managed marker from birth:
+  // an unstamped profile would be invisible to currentProfileIsManaged()
+  // and the next run would create a second one. Treat stamping failure
+  // like any other setup failure and roll back.
+  if (!stampManagedProfile(*profileName)) {
+    blog(LOG_ERROR, "[Profile] Managed-marker stamping failed, rolling back");
     rollbackProfileCreation(*profileName);
     return false;
   }
