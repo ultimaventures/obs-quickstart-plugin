@@ -1,6 +1,7 @@
 #ifndef OBS_SETUP_SETTINGS_SETTINGS_MODULE_HPP
 #define OBS_SETUP_SETTINGS_SETTINGS_MODULE_HPP
 
+#include <cstdint>
 #include <string>
 
 namespace obs_setup {
