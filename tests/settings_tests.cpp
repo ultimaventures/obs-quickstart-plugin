@@ -110,6 +110,23 @@ void config_set_bool(config_t *config, const char *section, const char *name,
   fake->bools[std::make_pair(std::string(section), std::string(name))] = value;
 }
 
+bool config_get_bool(config_t *config, const char *section, const char *name) {
+  const auto *fake = reinterpret_cast<const FakeConfig *>(config);
+  const auto it =
+      fake->bools.find(std::make_pair(std::string(section), std::string(name)));
+  return it != fake->bools.end() ? it->second : false;
+}
+
+bool config_remove_value(config_t *config, const char *section,
+                         const char *name) {
+  auto *fake = reinterpret_cast<FakeConfig *>(config);
+  const auto key = std::make_pair(std::string(section), std::string(name));
+  fake->strings.erase(key);
+  fake->uints.erase(key);
+  fake->bools.erase(key);
+  return true;
+}
+
 int config_save(config_t *config) {
   auto *fake = reinterpret_cast<FakeConfig *>(config);
   fake->saveCalled = true;
@@ -375,6 +392,50 @@ TEST_F(SettingsTest, ApplyReturnsFalseWhenSaveFails) {
   EXPECT_FALSE(mgr.applyEncoderPreset("p5"));
   EXPECT_FALSE(mgr.applyAudioSettings());
   EXPECT_FALSE(mgr.applyRecordingSettings());
+}
+
+// On save failure the apply* methods must restore the previous in-memory
+// values — otherwise OBS's next save would persist a value the UI just
+// reported as FAILED.
+
+TEST_F(SettingsTest, ApplyEncoderPresetSaveFailureRestoresOldValue) {
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "nvenc";
+  g_fakeConfig.strings[{"SimpleOutput", "NVENCPreset2"}] = "p3";
+  g_fakeConfig.saveFails = true;
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyEncoderPreset("p5"));
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "NVENCPreset2"}]), "p3");
+}
+
+TEST_F(SettingsTest, ApplyEncoderPresetSaveFailureRemovesNewKey) {
+  g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "x264";
+  // No Preset key beforehand: a failed apply must not leave one behind.
+  g_fakeConfig.saveFails = true;
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyEncoderPreset("veryfast"));
+  EXPECT_EQ(g_fakeConfig.strings.count({"SimpleOutput", "Preset"}), 0u);
+}
+
+TEST_F(SettingsTest, ApplyAudioSettingsSaveFailureRestores) {
+  g_fakeConfig.uints[{"Audio", "SampleRate"}] = 44100;
+  g_fakeConfig.strings[{"Audio", "ChannelSetup"}] = "Mono";
+  g_fakeConfig.saveFails = true;
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyAudioSettings());
+  EXPECT_EQ((g_fakeConfig.uints[{"Audio", "SampleRate"}]), 44100u);
+  EXPECT_EQ((g_fakeConfig.strings[{"Audio", "ChannelSetup"}]), "Mono");
+}
+
+TEST_F(SettingsTest, ApplyRecordingSettingsSaveFailureRestores) {
+  g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}] = "Stream";
+  g_fakeConfig.strings[{"SimpleOutput", "RecFormat2"}] = "mp4";
+  g_fakeConfig.bools[{"Video", "AutoRemux"}] = false;
+  g_fakeConfig.saveFails = true;
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyRecordingSettings());
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]), "Stream");
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecFormat2"}]), "mp4");
+  EXPECT_FALSE((g_fakeConfig.bools[{"Video", "AutoRemux"}]));
 }
 
 TEST_F(SettingsTest, ApplyReturnsFalseWithNoProfileConfig) {
