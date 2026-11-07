@@ -1,5 +1,6 @@
 #include "settings-module.hpp"
 
+#include <algorithm>
 #include <filesystem>
 
 #include <obs-frontend-api.h> // obs_frontend_get_profile_config,
@@ -23,14 +24,6 @@ constexpr const char *kX264Presets[] = {
     "medium",    "slow",      "slower",   "veryslow", "placebo",
 };
 
-// NVENC presets are p1 (max performance) through p7 (max quality); the
-// strings are identical in Simple and Advanced mode (verified against
-// OBS 31.1.1 plugins/obs-nvenc/nvenc-properties.c).
-bool isValidNvencPreset(const std::string &preset) {
-  return preset.size() == 2 && preset[0] == 'p' && preset[1] >= '1' &&
-         preset[1] <= '7';
-}
-
 bool isNvencEncoder(const std::string &encoderId) {
   // Native OBS NVENC only. The legacy FFmpeg NVENC ids (ffmpeg_nvenc,
   // ffmpeg_hevc_nvenc) use a different preset property ("preset2", not
@@ -44,6 +37,13 @@ bool isNvencEncoder(const std::string &encoderId) {
 // SimpleOutput/StreamEncoder) to libobs encoder ids. Mirrors OBS's
 // get_simple_output_encoder() in frontend/utility/SimpleOutput.cpp;
 // the SIMPLE_ENCODER_* constants live in frontend/widgets/OBSBasic.hpp.
+
+// True when `preset` is in the verified list for `encoderId`
+// (presetsFor() is the single source of truth for that list).
+bool isVerifiedPreset(const std::string &encoderId, const std::string &preset) {
+  const auto presets = presetsFor(encoderId);
+  return std::find(presets.begin(), presets.end(), preset) != presets.end();
+}
 } // namespace
 
 // Matches the declaration in settings-module.hpp; the tests call this
@@ -98,25 +98,45 @@ bool canMigrateEncoderPreset(const std::string &encoderId) {
 }
 
 bool isValidX264Preset(const std::string &preset) {
-  for (const char *p : kX264Presets) {
-    if (preset == p)
-      return true;
-  }
-  return false;
+  return isVerifiedPreset("obs_x264", preset);
 }
 
-void SettingsManager::applyEncoderPreset(const std::string &preset) {
+std::vector<std::string> presetsFor(const std::string &encoderId) {
+  if (isNvencEncoder(encoderId)) {
+    // NVENC presets are p1 (max performance) through p7 (max quality);
+    // the strings are identical in Simple and Advanced mode (verified
+    // against OBS 31.1.1 plugins/obs-nvenc/nvenc-properties.c).
+    std::vector<std::string> presets;
+    for (int i = 1; i <= 7; ++i)
+      presets.push_back("p" + std::to_string(i));
+    return presets;
+  }
+  if (encoderId == "obs_x264")
+    return {std::begin(kX264Presets), std::end(kX264Presets)};
+  // QSV/AMF/Apple preset vocabularies are unverified — empty, never guess.
+  return {};
+}
+
+std::string defaultPresetFor(const std::string &encoderId) {
+  if (isNvencEncoder(encoderId))
+    return DEFAULT_ENCODER_PRESET;
+  if (encoderId == "obs_x264")
+    return DEFAULT_X264_PRESET;
+  return "";
+}
+
+bool SettingsManager::applyEncoderPreset(const std::string &preset) {
   config_t *config = obs_frontend_get_profile_config();
   if (!config) {
     blog(LOG_ERROR, "[Settings] applyEncoderPreset: no profile config");
-    return;
+    return false;
   }
   const char *simpleEncoderC =
       config_get_string(config, "SimpleOutput", "StreamEncoder");
   if (!simpleEncoderC || !*simpleEncoderC) {
     blog(LOG_ERROR,
          "[Settings] applyEncoderPreset: SimpleOutput/StreamEncoder missing");
-    return;
+    return false;
   }
   // SimpleOutput/StreamEncoder holds a UI string ("nvenc", "x264", ...),
   // not a libobs id — resolve it first.
@@ -126,7 +146,7 @@ void SettingsManager::applyEncoderPreset(const std::string &preset) {
          "[Settings] applyEncoderPreset: unrecognized encoder '%s'; preset "
          "not applied",
          simpleEncoderC);
-    return;
+    return false;
   }
   const std::string key = presetKeyForEncoder(encoderId);
   if (key.empty()) {
@@ -134,47 +154,52 @@ void SettingsManager::applyEncoderPreset(const std::string &preset) {
          "[Settings] applyEncoderPreset: no preset key for encoder '%s'; "
          "preset not applied",
          encoderId.c_str());
-    return;
+    return false;
   }
   // Validate the preset value against the encoder family. Only NVENC
   // (p1-p7) and x264 (standard names) have verified value lists; QSV/AMF/
   // Apple presets use different vocabularies, so refuse rather than
   // writing a value that's invalid for that family.
-  const bool presetOk = isNvencEncoder(encoderId) ? isValidNvencPreset(preset)
-                        : encoderId == "obs_x264" ? isValidX264Preset(preset)
-                                                  : false;
-  if (!presetOk) {
+  if (!isVerifiedPreset(encoderId, preset)) {
     blog(LOG_WARNING,
          "[Settings] applyEncoderPreset: preset '%s' invalid for encoder "
          "'%s'; not applied",
          preset.c_str(), encoderId.c_str());
-    return;
+    return false;
   }
   // NOTE: "preset"/"preset2" are encoder *property* names, not profile keys —
   // never write those. The key above is the verified Simple-mode profile key.
   config_set_string(config, "SimpleOutput", key.c_str(), preset.c_str());
-  config_save(config);
+  if (config_save(config) != CONFIG_SUCCESS) {
+    blog(LOG_ERROR, "[Settings] applyEncoderPreset: config_save failed");
+    return false;
+  }
   blog(LOG_INFO, "[Settings] Encoder preset: SimpleOutput/%s = %s", key.c_str(),
        preset.c_str());
+  return true;
 }
 
-void SettingsManager::applyAudioSettings() {
+bool SettingsManager::applyAudioSettings() {
   config_t *config = obs_frontend_get_profile_config();
   if (!config) {
     blog(LOG_ERROR, "[Settings] applyAudioSettings: no profile config");
-    return;
+    return false;
   }
   config_set_uint(config, "Audio", "SampleRate", AUDIO_SAMPLE_RATE_HZ);
   config_set_string(config, "Audio", "ChannelSetup", AUDIO_CHANNEL_SETUP);
-  config_save(config);
+  if (config_save(config) != CONFIG_SUCCESS) {
+    blog(LOG_ERROR, "[Settings] applyAudioSettings: config_save failed");
+    return false;
+  }
   blog(LOG_INFO, "[Settings] Audio: 48 kHz, Stereo");
+  return true;
 }
 
-void SettingsManager::applyRecordingSettings() {
+bool SettingsManager::applyRecordingSettings() {
   config_t *config = obs_frontend_get_profile_config();
   if (!config) {
     blog(LOG_ERROR, "[Settings] applyRecordingSettings: no profile config");
-    return;
+    return false;
   }
   // Exact keys OBS 31 reads (verified against
   // frontend/utility/SimpleOutput.cpp): RecQuality="HQ" is the stored value
@@ -183,9 +208,13 @@ void SettingsManager::applyRecordingSettings() {
   config_set_string(config, "SimpleOutput", "RecQuality", RECORDING_QUALITY);
   config_set_string(config, "SimpleOutput", "RecFormat2", RECORDING_FORMAT);
   config_set_bool(config, "Video", "AutoRemux", true);
-  config_save(config);
+  if (config_save(config) != CONFIG_SUCCESS) {
+    blog(LOG_ERROR, "[Settings] applyRecordingSettings: config_save failed");
+    return false;
+  }
   blog(LOG_INFO, "[Settings] Recording: quality HQ (Indistinguishable), "
                  "format MKV, auto-remux on");
+  return true;
 }
 
 MigrateResult SettingsManager::migrateToAdvancedMode() {
@@ -251,8 +280,7 @@ MigrateResult SettingsManager::migrateToAdvancedMode() {
     return MigrateResult::UnsupportedEncoder;
   }
   const std::string preset(presetC);
-  const bool presetOk = isNvencEncoder(encoderId) ? isValidNvencPreset(preset)
-                                                  : isValidX264Preset(preset);
+  const bool presetOk = isVerifiedPreset(encoderId, preset);
   if (!presetOk) {
     blog(LOG_ERROR,
          "[Settings] migrateToAdvancedMode: unrecognized preset value '%s' "

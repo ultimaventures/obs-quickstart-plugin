@@ -3,12 +3,15 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace obs_setup {
 namespace settings {
 
 /** Default NVENC preset (p1 = max performance, p7 = max quality). */
 inline constexpr const char *DEFAULT_ENCODER_PRESET = "p5";
+/** Default x264 preset. */
+inline constexpr const char *DEFAULT_X264_PRESET = "veryfast";
 /** Target sample rate: 48 kHz industry standard. */
 inline constexpr uint32_t AUDIO_SAMPLE_RATE_HZ = 48000;
 /** Target channel setup. */
@@ -66,6 +69,27 @@ bool canMigrateEncoderPreset(const std::string &encoderId);
  */
 bool isValidX264Preset(const std::string &preset);
 
+/**
+ * @brief The verified preset values for a libobs encoder id.
+ *
+ * Pure function. Single source of truth for the preset vocabulary:
+ * SettingsManager validates against this list and the settings dialog
+ * populates its preset picker from it, so the two can never drift.
+ * NVENC (obs_nvenc_*) → p1–p7; x264 (obs_x264) → the standard preset
+ * names. Every other encoder (QSV/AMF/Apple/unknown) returns an empty
+ * list: their preset vocabularies are unverified, so callers must
+ * refuse rather than guess.
+ */
+std::vector<std::string> presetsFor(const std::string &encoderId);
+
+/**
+ * @brief The recommended default preset for a libobs encoder id.
+ *
+ * Pure function. NVENC → "p5", x264 → "veryfast". Returns an empty
+ * string for encoders without a verified preset list (see presetsFor()).
+ */
+std::string defaultPresetFor(const std::string &encoderId);
+
 /** Outcome of SettingsManager::migrateToAdvancedMode(). */
 enum class MigrateResult {
   Success,       ///< Migrated; caller should show the recording-settings modal.
@@ -84,9 +108,9 @@ enum class MigrateResult {
  * @brief Applies the plugin-owned settings OBS's wizard does not set.
  *
  * All methods must be called on the GUI thread (OBS frontend API
- * requirement). Failures are logged via blog(); apply* methods report via
- * return values where the caller can act, otherwise they log and no-op
- * rather than throwing.
+ * requirement). Failures are logged via blog() AND reported via the
+ * apply* methods' bool returns, so the UI never has to claim a success
+ * it could not verify.
  *
  * Explicitly NOT handled here: keyframe interval. In Simple output mode
  * (which the wizard forces) there is no keyframe-interval config path —
@@ -106,11 +130,22 @@ public:
    * against the encoder family (NVENC: p1-p7; x264: standard preset names)
    * — a mismatch is refused, never written. Unknown encoders are skipped
    * (logged), never guessed.
+   *
+   * @return True only when the value was written and config_save()
+   * succeeded; false on missing profile config, missing/unrecognized
+   * encoder, invalid preset, or save failure.
    */
-  void applyEncoderPreset(const std::string &preset);
+  bool applyEncoderPreset(const std::string &preset);
 
-  /** @brief Sets 48 kHz sample rate and stereo channels (Audio section). */
-  void applyAudioSettings();
+  /**
+   * @brief Sets 48 kHz sample rate and stereo channels (Audio section).
+   *
+   * @return True only when the values were written and config_save()
+   * succeeded. Note the running OBS session keeps its startup sample
+   * rate until it restarts (or Settings is saved) — the write landing
+   * is what this return value vouches for.
+   */
+  bool applyAudioSettings();
 
   /**
    * @brief Sets MKV format, HQ ("Indistinguishable") quality, auto-remux.
@@ -118,8 +153,11 @@ public:
    * Writes SimpleOutput/RecQuality="HQ", SimpleOutput/RecFormat2="mkv",
    * Video/AutoRemux=true — the exact keys OBS 31 reads (verified against
    * frontend/utility/SimpleOutput.cpp and real basic.ini fixtures).
+   *
+   * @return True only when the values were written and config_save()
+   * succeeded.
    */
-  void applyRecordingSettings();
+  bool applyRecordingSettings();
 
   /**
    * @brief Migrates Simple-mode streaming settings to Advanced mode.
@@ -140,7 +178,11 @@ public:
    * restored before returning WriteFailed. Recording settings are
    * intentionally NOT migrated (no Advanced equivalent); on Success the
    * caller must show the modal directing the user to Settings → Output,
-   * gated by needsRecordingModal(). The audio bitrate (ABitrate) is
+   * gated by needsRecordingModal(). The modal must also say the change
+   * takes effect only after an OBS restart (or saving Settings): the
+   * running session keeps its Simple output handler until then —
+   * verified empirically on OBS 30 (post-migrate recordings still used
+   * the Simple handler). The audio bitrate (ABitrate) is
    * intentionally not migrated: its Advanced-mode destination is
    * unverified, and the encoder default is safe.
    */
