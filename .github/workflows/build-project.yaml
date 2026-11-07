@@ -169,8 +169,11 @@ jobs:
         # The non-ASCII path tests only prove the u8path handling on
         # Windows (path(string) decodes UTF-8 already on macOS/Linux), but
         # run everywhere so a broken harness fails fast on every leg.
+        # The macOS build script only builds the plugin target, so build the
+        # test executables here before ctest looks for them.
         run: |
           : Run Tests 🧪
+          cmake --build ${{ github.workspace }}/build_macos --config ${{ needs.check-event.outputs.config }} --target profile_tests settings_tests
           ctest --test-dir ${{ github.workspace }}/build_macos --output-on-failure -C ${{ needs.check-event.outputs.config }}
 
       - name: Package Plugin 📀

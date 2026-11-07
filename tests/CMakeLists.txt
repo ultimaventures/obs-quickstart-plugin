@@ -40,6 +40,24 @@ target_link_libraries(
 )
 
 include(GoogleTest)
+
+# Windows: the test executables are run at build time by gtest_discover_tests
+# and later by ctest, but dependency DLLs (Qt, libobs, obs-frontend-api) are
+# not on the loader PATH in CI, so the executable dies with 0xc0000135
+# (STATUS_DLL_NOT_FOUND). Copy the runtime DLLs next to the executable.
+# This POST_BUILD step must be registered before gtest_discover_tests adds
+# its own, so the DLLs are in place when discovery runs the executable.
+if(WIN32)
+    add_custom_command(
+        TARGET profile_tests
+        POST_BUILD
+        COMMAND
+            ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:profile_tests>
+            $<TARGET_FILE_DIR:profile_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
 gtest_discover_tests(profile_tests)
 
 add_executable(
@@ -61,4 +79,15 @@ target_link_libraries(
         GTest::gtest_main
 )
 
+if(WIN32)
+    add_custom_command(
+        TARGET settings_tests
+        POST_BUILD
+        COMMAND
+            ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:settings_tests>
+            $<TARGET_FILE_DIR:settings_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
 gtest_discover_tests(settings_tests)
