@@ -191,6 +191,9 @@ TEST(PresetKeyForEncoder, UnknownReturnsEmpty) {
   EXPECT_EQ(settings::presetKeyForEncoder("obs_videotoolbox"), "");
   EXPECT_EQ(settings::presetKeyForEncoder("bogus_encoder"), "");
   EXPECT_EQ(settings::presetKeyForEncoder(""), "");
+  // Legacy FFmpeg NVENC uses a different preset property ("preset2"), so
+  // it must not match as NVENC — fail safe.
+  EXPECT_EQ(settings::presetKeyForEncoder("ffmpeg_nvenc"), "");
 }
 
 // ---- canMigrateEncoderPreset (pure) ----
