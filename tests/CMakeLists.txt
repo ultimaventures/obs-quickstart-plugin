@@ -58,6 +58,7 @@ if(WIN32)
         GLOB _obs_test_dlls
         "${PROJECT_SOURCE_DIR}/.deps/bin/64bit/*.dll"
         "${PROJECT_SOURCE_DIR}/.deps/bin/*.dll"
+        "${PROJECT_SOURCE_DIR}/.deps/obs-deps-*/bin/64bit/*.dll"
     )
     add_custom_command(
         TARGET profile_tests
@@ -129,9 +130,6 @@ if(APPLE)
             "LINKER:-rpath,${_obs_test_rpath}"
         )
     endforeach()
-    target_link_options(
-        profile_tests
-        settings_tests
-        PRIVATE ${_obs_test_rpath_link_options}
-    )
+    target_link_options(profile_tests PRIVATE ${_obs_test_rpath_link_options})
+    target_link_options(settings_tests PRIVATE ${_obs_test_rpath_link_options})
 endif()
