@@ -16,12 +16,15 @@ namespace ui {
  * @brief Progress + results dialog for the 30-second stability check.
  *
  * Runs monitoring::StabilityMonitor: a progress bar with live FPS/CPU
- * while an attempt records, then a plain-language verdict. On a final
- * failure it offers the two architecture §7 follow-ups — re-run OBS's
- * Auto-Configuration Wizard, or apply the conservative fallback — and
- * does nothing to the profile until the user picks one (the fallback
- * additionally asks for confirmation first). Closing or cancelling
- * mid-test cancels the check; the monitor deletes the test recording.
+ * while an attempt records, then a plain-language verdict. The
+ * results screen tells the truth about side effects: if the test
+ * stepped the encoder preset down, it says so and offers one click to
+ * restore the original; cleanup claims come from the monitor's own
+ * report of what it actually deleted. On a final failure it also
+ * offers the two architecture §7 follow-ups — re-run OBS's
+ * Auto-Configuration Wizard, or apply the conservative fallback (the
+ * fallback additionally asks for confirmation first). Closing or
+ * cancelling mid-test cancels the check.
  */
 class StabilityDialog : public QDialog {
   Q_OBJECT
@@ -41,12 +44,14 @@ private slots:
   void onCancelClicked();
   void onWizardClicked();
   void onFallbackClicked();
+  void onRestoreClicked();
 
 private:
   void showResults(const QString &heading, const QString &body,
-                   bool offerFollowUps);
+                   bool offerFollowUps, bool offerRestore = false);
 
   monitoring::StabilityMonitor m_monitor;
+  monitoring::TestOutcome m_lastOutcome;
   QLabel *m_headingLabel = nullptr;
   QLabel *m_attemptLabel = nullptr;
   QLabel *m_statsLabel = nullptr;
@@ -55,6 +60,7 @@ private:
   QPushButton *m_cancelButton = nullptr;
   QPushButton *m_wizardButton = nullptr;
   QPushButton *m_fallbackButton = nullptr;
+  QPushButton *m_restoreButton = nullptr;
   QPushButton *m_closeButton = nullptr;
   bool m_running = false;
 };

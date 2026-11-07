@@ -9,6 +9,7 @@
 #include <QVBoxLayout>
 
 #include <obs-frontend-api.h>
+#include <obs.h>
 #include <util/base.h>
 
 #include "monitoring/monitoring-module.hpp"
@@ -31,8 +32,11 @@ QString attemptSummary(const monitoring::AttemptRecord &record) {
       .arg(record.stability.skippedPercent, 0, 'f', 2)
       .arg(m.averageFps, 0, 'f', 1)
       .arg(m.averageCpuPercent, 0, 'f', 0)
-      .arg(record.stability.stable ? QStringLiteral("passed")
-                                   : QStringLiteral("too slow"));
+      .arg(record.stability.tier == monitoring::Tier::Stable
+               ? QStringLiteral("passed")
+               : (record.stability.tier == monitoring::Tier::Marginal
+                      ? QStringLiteral("borderline")
+                      : QStringLiteral("too slow")));
 }
 
 QString attemptsSummary(const monitoring::TestOutcome &outcome) {
@@ -70,6 +74,8 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
   m_fallbackButton = new QPushButton(
       QStringLiteral("Apply conservative fallback (720p30, x264 ultrafast)"));
   m_fallbackButton->hide();
+  m_restoreButton = new QPushButton;
+  m_restoreButton->hide();
   m_closeButton = new QPushButton(QStringLiteral("Close"));
   m_closeButton->hide();
 
@@ -81,6 +87,7 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
   layout->addWidget(m_bodyLabel);
   layout->addWidget(m_wizardButton);
   layout->addWidget(m_fallbackButton);
+  layout->addWidget(m_restoreButton);
   layout->addWidget(m_cancelButton);
   layout->addWidget(m_closeButton);
 
@@ -96,6 +103,8 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
           &StabilityDialog::onWizardClicked);
   connect(m_fallbackButton, &QPushButton::clicked, this,
           &StabilityDialog::onFallbackClicked);
+  connect(m_restoreButton, &QPushButton::clicked, this,
+          &StabilityDialog::onRestoreClicked);
   connect(m_closeButton, &QPushButton::clicked, this, &QDialog::accept);
 }
 
@@ -139,6 +148,8 @@ void StabilityDialog::onAttemptStarted(int attempt, int maxAttempts) {
 
 void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
   m_running = false;
+  m_lastOutcome = outcome;
+  const QString cleanup = QString::fromStdString(outcome.cleanupNote);
   using Kind = monitoring::TestOutcome::Kind;
   switch (outcome.kind) {
   case Kind::Stable: {
@@ -148,22 +159,67 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
                              "%1 to reach a stable result, and it stays "
                              "there — that's the setting that passed.")
                   .arg(QString::fromStdString(outcome.finalPreset));
+    if (!cleanup.isEmpty())
+      body += QStringLiteral("\n\n") + cleanup;
     showResults(QStringLiteral("Your setup passed the stability check."), body,
                 false);
     break;
   }
-  case Kind::Unstable: {
+  case Kind::Marginal: {
     QString body = attemptsSummary(outcome);
     body +=
         QStringLiteral(
-            "\n\nEven at the fastest encoder setting tried (%1), your PC "
-            "dropped too many frames. You can re-run OBS's Auto-Configuration "
-            "Wizard and let it pick lighter settings, or apply a conservative "
-            "fallback (720p30 at 2500 kbps, x264 ultrafast). Nothing changes "
-            "unless you pick one.")
-            .arg(QString::fromStdString(outcome.finalPreset));
+            "\n\nYour PC was right at the edge: it dropped a few frames, but "
+            "not many. One 30-second test on a busy PC can look like this, so "
+            "nothing was changed — your encoder preset is still %1. Close "
+            "other heavy apps and run the check again; if it keeps landing "
+            "here, the follow-ups below can lighten your settings.")
+            .arg(QString::fromStdString(outcome.originalPreset));
+    if (!cleanup.isEmpty())
+      body += QStringLiteral("\n\n") + cleanup;
+    showResults(QStringLiteral("Your setup is borderline."), body, true);
+    break;
+  }
+  case Kind::Unstable: {
+    QString body = attemptsSummary(outcome);
+    if (outcome.finalPreset != outcome.originalPreset) {
+      body += QStringLiteral(
+                  "\n\nOne thing DID change during the test: to make "
+                  "encoding cheaper, your encoder preset was stepped from "
+                  "%1 down to %2, and it is still %2 now. Use the restore "
+                  "button below to put %1 back, or leave it — %2 is "
+                  "easier on your PC. Nothing else was changed.")
+                  .arg(QString::fromStdString(outcome.originalPreset),
+                       QString::fromStdString(outcome.finalPreset));
+    }
+    if (outcome.presetGoverned) {
+      body +=
+          QStringLiteral(
+              "\n\nEven at the fastest encoder setting tried (%1), your PC "
+              "dropped too many frames. You can also re-run OBS's "
+              "Auto-Configuration Wizard and let it pick lighter settings, or "
+              "apply a conservative fallback (720p30 at 2500 kbps, x264 "
+              "ultrafast) — those two only happen if you pick them.")
+              .arg(QString::fromStdString(outcome.finalPreset));
+    } else {
+      const char *display =
+          outcome.encoderId.empty()
+              ? nullptr
+              : obs_encoder_get_display_name(outcome.encoderId.c_str());
+      body += QStringLiteral(
+                  "\n\nYour recording encoder (%1) runs at a preset this "
+                  "test can't adjust, and your PC dropped too many frames "
+                  "with it, so there was nothing to retry at a cheaper "
+                  "setting. Re-running OBS's Auto-Configuration Wizard or "
+                  "applying the conservative fallback below can lighten "
+                  "your settings — those only happen if you pick them.")
+                  .arg(display ? QString::fromUtf8(display)
+                               : QString::fromStdString(outcome.encoderId));
+    }
+    if (!cleanup.isEmpty())
+      body += QStringLiteral("\n\n") + cleanup;
     showResults(QStringLiteral("Your PC couldn't keep up at these settings."),
-                body, true);
+                body, true, outcome.finalPreset != outcome.originalPreset);
     break;
   }
   case Kind::Busy:
@@ -174,19 +230,25 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
             .arg(QString::fromStdString(outcome.detail)),
         false);
     break;
-  case Kind::Cancelled:
-    showResults(QStringLiteral("Stability check cancelled."),
-                QStringLiteral("The test recording was deleted."), false);
+  case Kind::Cancelled: {
+    QString body =
+        cleanup.isEmpty() ? QStringLiteral("The test was stopped.") : cleanup;
+    showResults(QStringLiteral("Stability check cancelled."), body, false);
     break;
-  case Kind::Error:
-    showResults(QStringLiteral("The stability check couldn't run."),
-                QString::fromStdString(outcome.detail), false);
+  }
+  case Kind::Error: {
+    QString body = QString::fromStdString(outcome.detail);
+    if (!cleanup.isEmpty())
+      body += QStringLiteral("\n\n") + cleanup;
+    showResults(QStringLiteral("The stability check couldn't run."), body,
+                false);
     break;
+  }
   }
 }
 
 void StabilityDialog::showResults(const QString &heading, const QString &body,
-                                  bool offerFollowUps) {
+                                  bool offerFollowUps, bool offerRestore) {
   m_headingLabel->setText(heading);
   m_attemptLabel->hide();
   m_progressBar->hide();
@@ -196,11 +258,38 @@ void StabilityDialog::showResults(const QString &heading, const QString &body,
   m_bodyLabel->show();
   m_wizardButton->setVisible(offerFollowUps);
   m_fallbackButton->setVisible(offerFollowUps);
+  if (offerRestore) {
+    m_restoreButton->setText(
+        QStringLiteral("Restore my original encoder preset (%1)")
+            .arg(QString::fromStdString(m_lastOutcome.originalPreset)));
+    m_restoreButton->show();
+  } else {
+    m_restoreButton->hide();
+  }
   m_closeButton->show();
   m_closeButton->setFocus();
   // The dialog was sized for the (short) progress view; grow it to
   // fit the results text instead of clipping wrapped lines.
   adjustSize();
+}
+
+void StabilityDialog::onRestoreClicked() {
+  settings::SettingsManager settingsManager;
+  if (settingsManager.applyEncoderPreset(m_lastOutcome.originalPreset)) {
+    m_restoreButton->hide();
+    m_bodyLabel->setText(
+        m_bodyLabel->text() +
+        QStringLiteral("\n\nYour encoder preset is back to %1.")
+            .arg(QString::fromStdString(m_lastOutcome.originalPreset)));
+    adjustSize();
+  } else {
+    QMessageBox::warning(
+        this, QStringLiteral("Restore failed"),
+        QStringLiteral("The original preset could not be restored. Your "
+                       "preset is still %1; you can change it in OBS "
+                       "Settings > Output.")
+            .arg(QString::fromStdString(m_lastOutcome.finalPreset)));
+  }
 }
 
 void StabilityDialog::onCancelClicked() {
