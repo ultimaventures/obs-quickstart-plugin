@@ -165,6 +165,14 @@ jobs:
           codesign: ${{ fromJSON(needs.check-event.outputs.codesign) }}
           codesignIdent: ${{ steps.codesign.outputs.codesignIdent }}
 
+      - name: Run Tests 🧪
+        # The non-ASCII path tests only prove the u8path handling on
+        # Windows (path(string) decodes UTF-8 already on macOS/Linux), but
+        # run everywhere so a broken harness fails fast on every leg.
+        run: |
+          : Run Tests 🧪
+          ctest --test-dir ${{ github.workspace }}/build_macos --output-on-failure -C ${{ needs.check-event.outputs.config }}
+
       - name: Package Plugin 📀
         uses: ./.github/actions/package-plugin
         with:
@@ -263,6 +271,11 @@ jobs:
           target: x86_64
           config: ${{ needs.check-event.outputs.config }}
 
+      - name: Run Tests 🧪
+        run: |
+          : Run Tests 🧪
+          ctest --test-dir ${{ github.workspace }}/build_x86_64 --output-on-failure
+
       - name: Package Plugin 📀
         uses: ./.github/actions/package-plugin
         with:
@@ -351,6 +364,14 @@ jobs:
         with:
           target: x64
           config: ${{ needs.check-event.outputs.config }}
+
+      - name: Run Tests 🧪
+        # Load-bearing for the UTF-8 path tests: on Windows,
+        # path(std::string) decodes with the ANSI code page, so only this
+        # leg can catch a regression to locale-decoded path construction.
+        run: |
+          # Run Tests 🧪
+          ctest --test-dir ${{ github.workspace }}/build_x64 --output-on-failure -C ${{ needs.check-event.outputs.config }}
 
       - name: Package Plugin 📀
         uses: ./.github/actions/package-plugin

@@ -2,6 +2,7 @@
 #define OBS_SETUP_PROFILE_PROFILE_MODULE_HPP
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -79,6 +80,25 @@ std::string deduplicatedName(const std::string &base,
  */
 bool copyDirectoryTree(const std::string &source,
                        const std::string &destination);
+
+/**
+ * @brief Builds the timestamped backup destination inside a backups root.
+ *
+ * Pure function: every path component goes through u8path so non-ASCII
+ * (UTF-8) profile names survive the Windows ANSI code page. Called by
+ * backupExistingProfile() with the obs_module_config_path() root and by
+ * tests with a sandbox root — tests must call this production function,
+ * not rebuild the path in-test, so a regression to locale-decoded path
+ * construction fails the test.
+ *
+ * @param backupsDir UTF-8 bytes of the backups root directory.
+ * @param profileName UTF-8 profile display name.
+ * @param stamp Timestamp suffix (seconds since epoch).
+ * @return backupsDir / (profileName + "_" + stamp).
+ */
+std::filesystem::path backupDestinationFor(const std::string &backupsDir,
+                                           const std::string &profileName,
+                                           const std::string &stamp);
 
 /**
  * @brief Manages the Quickstart OBS profile and scene collection lifecycle.
