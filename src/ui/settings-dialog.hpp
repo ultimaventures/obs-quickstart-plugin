@@ -24,8 +24,9 @@ namespace ui {
  * - "Apply Settings" writes the preset plus the fixed quickstart audio
  *   (48 kHz stereo) and recording (HQ/MKV/auto-remux) settings,
  * - "Migrate to Advanced Mode" runs the Simple-to-Advanced migration
- *   (enabled only in Simple mode) and, on success, shows the
- *   recording-settings follow-up modal.
+ *   (enabled only in Simple mode AND for encoders whose preset mapping
+ *   is verified — settings::canMigrateEncoderPreset) and, on success,
+ *   shows the recording-settings follow-up modal.
  *
  * In Advanced mode the quickstart controls are disabled: they write
  * Simple-mode profile keys, which Advanced output ignores.
@@ -51,9 +52,10 @@ private:
   /**
    * @brief Populates the preset combo for a libobs encoder id.
    *
-   * Pre-selects `currentPreset` when it is one of the family's presets,
-   * otherwise the family default (NVENC p5 / x264 veryfast). Leaves the
-   * combo empty for encoders without a verified preset list.
+   * Items come from settings::presetsFor() — the same list the backend
+   * validates against. Pre-selects `currentPreset` when it is one of
+   * the family's presets, otherwise settings::defaultPresetFor().
+   * Leaves the combo empty for encoders without a verified preset list.
    */
   void populatePresets(const std::string &encoderId,
                        const std::string &currentPreset);
