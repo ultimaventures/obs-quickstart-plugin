@@ -74,7 +74,31 @@ std::map<std::string, uint64_t> StabilityMonitor::snapshotDirectory() const {
   std::error_code ec;
   for (const auto &entry : std::filesystem::directory_iterator(dir, ec)) {
     if (entry.is_regular_file(ec))
-      files[entry.path().filename().string()] = entry.file_size(ec);
+      files[entry.path().string()] = entry.file_size(ec);
+  }
+  return files;
+}
+
+std::map<std::string, uint64_t> StabilityMonitor::currentTestFiles() const {
+  std::map<std::string, uint64_t> files;
+  std::error_code ec;
+  if (!m_testFilePath.empty()) {
+    // Authoritative: the exact file the recording output is writing,
+    // plus the auto-remux sibling (same stem, .mp4) when it appears.
+    if (std::filesystem::is_regular_file(m_testFilePath, ec))
+      files[m_testFilePath] = std::filesystem::file_size(m_testFilePath, ec);
+    const std::string remuxed = std::filesystem::path(m_testFilePath)
+                                    .replace_extension(".mp4")
+                                    .string();
+    if (remuxed != m_testFilePath &&
+        std::filesystem::is_regular_file(remuxed, ec))
+      files[remuxed] = std::filesystem::file_size(remuxed, ec);
+    return files;
+  }
+  // Fallback: whatever appeared in the recording directory.
+  for (const auto &[path, size] : snapshotDirectory()) {
+    if (m_dirSnapshot.find(path) == m_dirSnapshot.end())
+      files[path] = size;
   }
   return files;
 }
@@ -125,11 +149,10 @@ void StabilityMonitor::start() {
   m_maxAttempts = maxAttempts(m_outcome.family);
   m_attempt = 0;
 
-  if (recordingDirectory().empty()) {
-    finish(TestOutcome::Kind::Error,
-           "OBS has no recording folder configured for this profile.");
-    return;
-  }
+  // Note: a fresh profile may have no SimpleOutput/FilePath saved at
+  // all — OBS records to a default location from in-memory settings.
+  // That is not an error: the test file's exact path is read back from
+  // the recording output's own settings once recording starts.
 
   obs_video_info ovi{};
   if (obs_get_video_info(&ovi) && ovi.fps_den != 0)
@@ -154,6 +177,7 @@ void StabilityMonitor::beginAttempt() {
   m_attemptMetrics = Metrics{};
   m_dirSnapshot = snapshotDirectory();
   m_lastNewFiles.clear();
+  m_testFilePath.clear();
 
   blog(LOG_INFO,
        "[Monitoring] Stability attempt %d/%d: encoder %s at preset "
@@ -195,6 +219,19 @@ void StabilityMonitor::onTick() {
       // take the encoder-skipped baseline at the first opportunity.
       m_baseSkippedFrames = recordingSkippedFrames();
       m_skippedBaselineTaken = true;
+      // Same moment: pin down the exact file this test owns, from the
+      // output's own settings ("path" is the full recording path for
+      // OBS's file outputs) — cleanup later deletes exactly this.
+      obs_output_t *output = obs_frontend_get_recording_output();
+      if (output) {
+        obs_data_t *settings = obs_output_get_settings(output);
+        if (settings) {
+          const char *path = obs_data_get_string(settings, "path");
+          if (path && *path)
+            m_testFilePath = path;
+          obs_data_release(settings);
+        }
+      }
     }
 
     const double fps = obs_get_active_fps();
@@ -220,13 +257,8 @@ void StabilityMonitor::onTick() {
 
   if (m_state == State::Settling) {
     ++m_settleTicks;
-    const auto now = snapshotDirectory();
-    std::map<std::string, uint64_t> newFiles;
-    for (const auto &[name, size] : now) {
-      if (m_dirSnapshot.find(name) == m_dirSnapshot.end())
-        newFiles[name] = size;
-    }
-    // Settled when the recorder is off and the set of new files (the
+    const auto newFiles = currentTestFiles();
+    // Settled when the recorder is off and the test's files (the
     // recording and any remuxed copy) stopped changing for a poll.
     const bool settled = !obs_frontend_recording_active() &&
                          !newFiles.empty() && newFiles == m_lastNewFiles;
@@ -263,19 +295,18 @@ void StabilityMonitor::sampleFinalMetrics() {
 }
 
 void StabilityMonitor::deleteTestFiles() {
-  const std::string dir = recordingDirectory();
-  for (const auto &[name, size] : m_lastNewFiles) {
+  // m_lastNewFiles holds full paths (see currentTestFiles()).
+  for (const auto &[path, size] : m_lastNewFiles) {
+    (void)size;
     std::error_code ec;
-    const auto path = std::filesystem::path(dir) / name;
     if (std::filesystem::remove(path, ec))
-      blog(LOG_INFO, "[Monitoring] Deleted test recording %s",
-           path.string().c_str());
+      blog(LOG_INFO, "[Monitoring] Deleted test recording %s", path.c_str());
     else if (!ec)
       blog(LOG_WARNING, "[Monitoring] Test recording already gone: %s",
-           path.string().c_str());
+           path.c_str());
     else
       blog(LOG_WARNING, "[Monitoring] Could not delete test recording %s: %s",
-           path.string().c_str(), ec.message().c_str());
+           path.c_str(), ec.message().c_str());
   }
 }
 
