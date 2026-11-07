@@ -198,6 +198,9 @@ void StabilityDialog::showResults(const QString &heading, const QString &body,
   m_fallbackButton->setVisible(offerFollowUps);
   m_closeButton->show();
   m_closeButton->setFocus();
+  // The dialog was sized for the (short) progress view; grow it to
+  // fit the results text instead of clipping wrapped lines.
+  adjustSize();
 }
 
 void StabilityDialog::onCancelClicked() {
