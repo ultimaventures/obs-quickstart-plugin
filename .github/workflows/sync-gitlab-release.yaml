@@ -47,7 +47,7 @@ jobs:
           # truth for notes and builds). Never copies the GitHub body, so
           # the `edited` trigger is unnecessary.
           RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
-          description="Builds are published on GitHub (unsigned — see the notes there for SmartScreen/Gatekeeper steps): [${TAG}](${RELEASE_URL})"
+          description="Plugin downloads are available on GitHub (unsigned — see the notes there for SmartScreen/Gatekeeper steps): [${TAG}](${RELEASE_URL})"
           # Create first: 201 means created.
           payload="$(jq -n --arg tag "${TAG}" --arg name "${TAG}" \
             --arg desc "${description}" \
