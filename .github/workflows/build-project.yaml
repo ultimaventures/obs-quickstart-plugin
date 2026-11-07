@@ -173,7 +173,7 @@ jobs:
         # test executables here before ctest looks for them.
         run: |
           : Run Tests 🧪
-          cmake --build ${{ github.workspace }}/build_macos --config ${{ needs.check-event.outputs.config }} --target profile_tests settings_tests
+          cmake --build ${{ github.workspace }}/build_macos --config ${{ needs.check-event.outputs.config }} --target profile_tests settings_tests monitoring_tests
           ctest --test-dir ${{ github.workspace }}/build_macos --output-on-failure -C ${{ needs.check-event.outputs.config }}
 
       - name: Package Plugin 📀
