@@ -227,7 +227,7 @@ MigrateResult SettingsManager::migrateToAdvancedMode() {
   // is unverified, and the encoder default is safe.
   config_set_string(config, "AdvOut", "Encoder", encoderId.c_str());
   config_set_string(config, "Output", "Mode", "Advanced");
-  if (!config_save(config)) {
+  if (config_save(config) != CONFIG_SUCCESS) {
     blog(LOG_ERROR, "[Settings] migrateToAdvancedMode: config_save failed");
     return MigrateResult::WriteFailed;
   }

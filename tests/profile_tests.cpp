@@ -23,6 +23,7 @@
 #include <vector>
 
 #include <obs-frontend-api.h>
+#include <obs-module.h>       // obs_current_module (stubbed below)
 #include <util/base.h>        // blog
 #include <util/config-file.h> // config_get_string, config_get_uint
 
@@ -43,11 +44,13 @@ extern "C" {
 
 void blog(int, const char *, ...) { g_blogCalled = true; }
 
-// obs_module_config_path() (used by backupExistingProfile()) references the
-// obs_current_module global, which only exists when linked as an OBS plugin.
-// Define it here (never dereferenced — backupExistingProfile() is not under
-// test) so the test binary links.
-struct obs_module *obs_current_module = nullptr;
+// obs_module_config_path() (used by backupExistingProfile()) expands to
+// obs_module_get_config_path(obs_current_module(), ...). In current OBS
+// headers obs_current_module is a per-plugin function (defined by
+// OBS_DECLARE_MODULE in a real plugin), not a global, so the test binary
+// defines the function here. It is never called — backupExistingProfile()
+// is not under test — so it returns null.
+obs_module_t *obs_current_module(void) { return nullptr; }
 
 // Minimal fake backing the config_get_* stubs: snapshotOutputConfig() reads
 // the wizard-owned keys through these, so tests drive the "after" values
