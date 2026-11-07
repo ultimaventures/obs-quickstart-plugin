@@ -22,7 +22,9 @@ namespace ui {
  * - shows the active Simple-mode encoder and lets the user pick a
  *   family-appropriate preset (NVENC p1-p7 / x264 preset names),
  * - "Apply Settings" writes the preset plus the fixed quickstart audio
- *   (48 kHz stereo) and recording (HQ/MKV/auto-remux) settings,
+ *   (48 kHz stereo) and recording (HQ/MKV/auto-remux) settings — the
+ *   dialog explains in plain language why the recording format is MKV
+ *   rather than offering a format picker,
  * - "Migrate to Advanced Mode" runs the Simple-to-Advanced migration
  *   (enabled only in Simple mode AND for encoders whose preset mapping
  *   is verified — settings::canMigrateEncoderPreset) and, on success,
