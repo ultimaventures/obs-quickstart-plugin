@@ -50,7 +50,10 @@ endif()
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.cpp)
 add_subdirectory(src)
 
-set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
+set_target_properties_plugin(
+    ${CMAKE_PROJECT_NAME}
+    PROPERTIES OUTPUT_NAME ${_name}
+)
 
 enable_testing()
 add_subdirectory(tests)

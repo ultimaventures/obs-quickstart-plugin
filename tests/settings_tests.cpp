@@ -255,7 +255,7 @@ TEST_F(SettingsTest, ApplyAudioSettings) {
 TEST_F(SettingsTest, ApplyRecordingSettings) {
   settings::SettingsManager mgr;
   mgr.applyRecordingSettings();
-  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}],
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]),
             "Indistinguishable");
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecFormat"}]), "mkv");
   EXPECT_TRUE((g_fakeConfig.bools[{"SimpleOutput", "RecRemux"}])]);
