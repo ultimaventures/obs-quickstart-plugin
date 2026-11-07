@@ -60,6 +60,20 @@ target_link_libraries(
         GTest::gtest_main
 )
 
+# The monitoring module's pure logic (monitoring-module.cpp) makes no
+# OBS or Qt calls, so its test binary needs neither — it links gtest
+# only and runs anywhere.
+add_executable(
+    monitoring_tests
+    ${CMAKE_CURRENT_LIST_DIR}/monitoring_tests.cpp
+    ${PROJECT_SOURCE_DIR}/src/monitoring/monitoring-module.cpp
+)
+target_include_directories(
+    monitoring_tests
+    PRIVATE ${PROJECT_SOURCE_DIR}/src/monitoring
+)
+target_link_libraries(monitoring_tests PRIVATE GTest::gtest_main)
+
 include(GoogleTest)
 
 if(WIN32)
@@ -113,6 +127,7 @@ endif()
 # By ctest time the build -- and the staging above -- is fully complete.
 gtest_discover_tests(profile_tests DISCOVERY_MODE PRE_TEST)
 gtest_discover_tests(settings_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(monitoring_tests DISCOVERY_MODE PRE_TEST)
 
 if(APPLE)
     # macOS: the test executables link the real libobs and Qt frameworks,
