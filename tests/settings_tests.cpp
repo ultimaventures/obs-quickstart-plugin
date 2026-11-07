@@ -116,6 +116,8 @@ const char *obs_encoder_get_display_name(const char *id) {
       {"obs_nvenc_av1_tex", "NVIDIA NVENC AV1"},
       {"obs_x264", "x264"},
       {"obs_qsv11", "QuickSync H.264"},
+      {"obs_qsv11_v2", "QuickSync H.264"},
+      {"obs_qsv11_av1", "QuickSync AV1"},
       {"amd_amf_h264", "AMD AMF H.264"},
   };
   const auto it = kKnown.find(id ? id : "");
