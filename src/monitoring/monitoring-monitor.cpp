@@ -82,6 +82,14 @@ StabilityMonitor::~StabilityMonitor() {
   }
 }
 
+std::string StabilityMonitor::recordingDirectory() const {
+  config_t *config = obs_frontend_get_profile_config();
+  if (!config)
+    return "";
+  const char *path = config_get_string(config, "SimpleOutput", "FilePath");
+  return path ? path : "";
+}
+
 std::string StabilityMonitor::remuxSiblingPath() const {
   if (m_testFilePath.empty())
     return "";
@@ -191,6 +199,23 @@ void StabilityMonitor::beginAttempt() {
   m_lastTrackedFiles.clear();
   m_settleTracker = SettleTracker{};
   m_pending = Pending::Evaluate;
+  // Ownership evidence for the recording file: which entry names
+  // already exist in the recording directory BEFORE this recording
+  // starts (names only — see the header note). If the directory is
+  // unknown (profile has no FilePath saved), no snapshot is taken
+  // and ownership stays unprovable for this attempt.
+  m_dirNamesAtStart.clear();
+  m_dirSnapshotTaken = false;
+  const std::string dir = recordingDirectory();
+  if (!dir.empty()) {
+    std::error_code ec;
+    for (const auto &entry : fs::directory_iterator(fs::u8path(dir), ec)) {
+      std::error_code ec2;
+      if (entry.is_regular_file(ec2))
+        m_dirNamesAtStart.insert(entry.path().filename().u8string());
+    }
+    m_dirSnapshotTaken = !ec;
+  }
   m_attemptClock.restart();
 
   blog(LOG_INFO,
@@ -280,14 +305,23 @@ void StabilityMonitor::takeBaseline() {
   // Ownership evidence, taken while the test recording is running:
   // the remux sibling cannot have been produced by THIS recording yet
   // (remux runs after stop), so a sibling present now predates the
-  // test and is the user's file. The recording itself is always a
-  // fresh file created for this recording: the frontend generates
-  // collision-safe filenames (OBSBasic::GenerateSpecifiedFilename
-  // appends " (n)" when a name is taken, and file overwrite is off by
-  // default), so the exact path the output reports did not hold a
-  // user file a moment ago.
+  // test and is the user's file. For the recording itself, the
+  // attempt-start directory snapshot decides: OBS computes the exact
+  // filename before starting (the output's "path" setting), names
+  // are timestamped by default but a user filename format can be
+  // constant, and what happens on a name collision depends on the
+  // profile's Output/OverwriteIfExists — so if a file with this name
+  // was already in the directory snapshot, it is treated as the
+  // user's. With no snapshot (directory unknown at attempt start),
+  // existence is unprovable and the answer is likewise
+  // "pre-existing": the cleanup plan will report, not delete.
   m_siblingExistedAtStart = fileExists(remuxSiblingPath());
-  m_recordingExistedAtStart = false;
+  if (m_dirSnapshotTaken) {
+    const std::string name = fs::u8path(m_testFilePath).filename().u8string();
+    m_recordingExistedAtStart = m_dirNamesAtStart.count(name) > 0;
+  } else {
+    m_recordingExistedAtStart = true;
+  }
   m_lastTrackedFiles = trackedFiles();
 }
 
