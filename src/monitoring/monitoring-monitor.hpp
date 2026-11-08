@@ -6,6 +6,7 @@
 #include <QElapsedTimer>
 #include <QObject>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -159,6 +160,8 @@ private:
   /** The exact cleanup candidates for this attempt, path -> size. */
   std::map<std::string, uint64_t> trackedFiles() const;
   std::string remuxSiblingPath() const;
+  /** SimpleOutput/FilePath, or "" when the profile has none saved. */
+  std::string recordingDirectory() const;
 
   State m_state = State::Idle;
   QTimer *m_timer = nullptr;
@@ -203,6 +206,17 @@ private:
   bool m_fallbackMode = false;
   bool m_recordingExistedAtStart = false;
   bool m_siblingExistedAtStart = false;
+  /**
+   * Entry NAMES (not sizes) in the recording directory, captured
+   * before the attempt's recording starts: the ownership evidence
+   * for the recording file itself. Names-only keeps the per-attempt
+   * cost to one directory listing. When the directory is unknown at
+   * attempt start (no FilePath saved), m_dirSnapshotTaken stays
+   * false and the recording is treated as pre-existing —
+   * unprovable ownership means report, never delete.
+   */
+  std::set<std::string> m_dirNamesAtStart;
+  bool m_dirSnapshotTaken = false;
   std::map<std::string, uint64_t> m_lastTrackedFiles;
   SettleTracker m_settleTracker;
   /** Pending finish for attempts that end through settling without a

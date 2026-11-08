@@ -123,17 +123,17 @@ int attemptsAvailable(EncoderFamily family, const std::string &currentPreset) {
 
 bool recordingPresetGovernedByConfig(EncoderFamily family,
                                      const std::string &recQuality) {
+  // Only "Stream" quality shares the streaming encoder instance —
+  // the one and only case where a Simple-mode preset key reaches
+  // the encoder the recording test measures. Every other quality
+  // builds a separate recording encoder with code-constructed
+  // settings (see the header note for the per-family detail).
+  if (recQuality != "Stream")
+    return false;
   switch (family) {
   case EncoderFamily::NVENC:
-    // Governed whenever the NVENC encoder is the recording encoder:
-    // "Stream" reuses the instance; HQ/FQ/MQ build a separate NVENC
-    // instance whose preset comes from the same profile value.
-    return recQuality == "Stream" || recQuality == "HQ" || recQuality == "FQ" ||
-           recQuality == "MQ";
   case EncoderFamily::X264:
-    // Only "Stream" (shared instance). HQ/FQ/MQ hardcode the
-    // recording preset to "veryfast" in OBS's code.
-    return recQuality == "Stream";
+    return true;
   case EncoderFamily::QSV:
   case EncoderFamily::AMF:
   case EncoderFamily::VideoToolbox:

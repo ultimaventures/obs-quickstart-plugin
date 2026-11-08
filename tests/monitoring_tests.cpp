@@ -306,19 +306,21 @@ TEST(PlanCleanup, NoPathDeletesNothing) {
 
 // ---- recordingPresetGovernedByConfig ----
 
-TEST(RecordingPresetGoverned, NvencGovernedForStreamAndQualityModes) {
+TEST(RecordingPresetGoverned, GovernedOnlyForStreamQuality) {
   EXPECT_TRUE(recordingPresetGovernedByConfig(EncoderFamily::NVENC, "Stream"));
-  EXPECT_TRUE(recordingPresetGovernedByConfig(EncoderFamily::NVENC, "HQ"));
-  EXPECT_TRUE(recordingPresetGovernedByConfig(EncoderFamily::NVENC, "FQ"));
-  EXPECT_TRUE(recordingPresetGovernedByConfig(EncoderFamily::NVENC, "MQ"));
-  EXPECT_FALSE(
-      recordingPresetGovernedByConfig(EncoderFamily::NVENC, "Lossless"));
+  EXPECT_TRUE(recordingPresetGovernedByConfig(EncoderFamily::X264, "Stream"));
 }
 
-TEST(RecordingPresetGoverned, X264GovernedOnlyForStreamQuality) {
-  EXPECT_TRUE(recordingPresetGovernedByConfig(EncoderFamily::X264, "Stream"));
-  // Under HQ the recording encoder's preset is hardcoded in OBS;
-  // stepping the streaming key would not change the measured encoder.
+TEST(RecordingPresetGoverned, SeparateRecordingEncoderIsNeverGoverned) {
+  // Under every non-Stream quality the recording encoder is a
+  // separate instance with code-built settings: x264's preset is
+  // hardcoded, NVENC gets no preset written at all. Stepping the
+  // streaming key would not change the measured encoder.
+  EXPECT_FALSE(recordingPresetGovernedByConfig(EncoderFamily::NVENC, "HQ"));
+  EXPECT_FALSE(recordingPresetGovernedByConfig(EncoderFamily::NVENC, "FQ"));
+  EXPECT_FALSE(recordingPresetGovernedByConfig(EncoderFamily::NVENC, "MQ"));
+  EXPECT_FALSE(
+      recordingPresetGovernedByConfig(EncoderFamily::NVENC, "Lossless"));
   EXPECT_FALSE(recordingPresetGovernedByConfig(EncoderFamily::X264, "HQ"));
   EXPECT_FALSE(
       recordingPresetGovernedByConfig(EncoderFamily::X264, "Lossless"));

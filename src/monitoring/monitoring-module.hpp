@@ -163,23 +163,23 @@ int attemptsAvailable(EncoderFamily family, const std::string &currentPreset);
  * the recording test measures.
  *
  * Established from OBS's SimpleOutput (frontend/utility/
- * SimpleOutput.cpp, LoadRecordingPreset / CreateVideoEncoder /
- * CreateRecordingEncoder):
+ * SimpleOutput.cpp at 31.1.1: LoadRecordingPreset,
+ * UpdateRecordingSettings and its per-family helpers):
  * - RecQuality "Stream": the file output reuses the streaming
- *   encoder instance itself, so the streaming preset key governs —
- *   for the families that HAVE a verified key (NVENC, x264).
- * - RecQuality "HQ"/"FQ"/"MQ": a SEPARATE encoder instance of the
- *   streaming encoder's type is created with code-built settings.
- *   For NVENC its preset is read from the same NVENCPreset2 profile
- *   value the streaming encoder uses, so the key still governs. For
- *   x264 the preset is hardcoded to "veryfast" in code — no config
- *   key reaches it, and stepping the streaming key would change an
- *   encoder the test is not measuring.
- * - RecQuality "Lossless" forces a separate x264 encoder; not
- *   governed.
- * - QSV/AMF/VideoToolbox have no verified Simple-mode preset key at
- *   all (settings::presetsFor is empty for them), so they are never
- *   governed here regardless of quality.
+ *   encoder instance itself (videoRecording = videoStreaming), so
+ *   the streaming preset key governs — for the families that HAVE
+ *   a verified key (NVENC, x264; settings::presetsFor is empty for
+ *   the others).
+ * - Every other quality ("HQ" and the other lossy tiers,
+ *   "Lossless"): the recording encoder is a SEPARATE instance
+ *   (built from SimpleOutput/RecEncoder, which can even differ
+ *   from StreamEncoder) whose settings are constructed in code —
+ *   x264 gets a hardcoded "veryfast" preset, AMF a hardcoded
+ *   "quality", and NVENC/QSV/Apple get NO preset written at all
+ *   (the encoder runs at its own internal default). No profile
+ *   preset key reaches any of them, so stepping the streaming key
+ *   would change an encoder the test is not measuring while the
+ *   measured one stays exactly as it was.
  *
  * When this returns false the test gets exactly one attempt: it
  * measures the encoder that actually records, and reports a verdict
