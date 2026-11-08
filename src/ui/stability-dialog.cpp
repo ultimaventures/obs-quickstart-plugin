@@ -1,5 +1,6 @@
 #include "stability-dialog.hpp"
 
+#include <QCheckBox>
 #include <QLabel>
 #include <QMessageBox>
 #include <QProgressBar>
@@ -11,6 +12,7 @@
 #include <obs-frontend-api.h>
 #include <obs.h>
 #include <util/base.h>
+#include <util/config-file.h>
 
 #include "monitoring/monitoring-module.hpp"
 #include "profile/profile-module.hpp"
@@ -53,46 +55,35 @@ QString attemptsSummary(const monitoring::TestOutcome &outcome) {
   return lines.join('\n');
 }
 
-QString tierWordForKind(monitoring::TestOutcome::Kind kind) {
-  using Kind = monitoring::TestOutcome::Kind;
-  switch (kind) {
-  case Kind::Stable:
-    return QStringLiteral("passed");
-  case Kind::Marginal:
-    return QStringLiteral("borderline");
-  default:
-    return QStringLiteral("too slow");
-  }
+/** The simultaneous recording side's report block (combined mode). */
+QString recordingSection(const monitoring::TestOutcome &outcome) {
+  if (!outcome.combinedMode || !outcome.recordingMeasured)
+    return QString();
+  const monitoring::AttemptRecord &r = outcome.recordingAttempt;
+  const monitoring::Metrics &m = r.metrics;
+  const QString quality =
+      outcome.recQuality.empty()
+          ? QStringLiteral("your recording quality")
+          : QStringLiteral("recording quality %1")
+                .arg(QString::fromStdString(outcome.recQuality));
+  return QStringLiteral("\n\nRecording at the same time (%1): %2 frames, "
+                        "rendering lag %3%, encoder skipped %4%, %5 fps "
+                        "— %6.")
+      .arg(quality)
+      .arg(m.totalFrames)
+      .arg(r.stability.laggedPercent, 0, 'f', 2)
+      .arg(r.stability.skippedPercent, 0, 'f', 2)
+      .arg(m.averageFps, 0, 'f', 1)
+      .arg(verdictWord(r.stability.tier));
 }
 
-/** The recording pass's report block, appended to the results body. */
-QString recordingSection(const monitoring::TestOutcome &outcome) {
-  if (!outcome.hasRecordingPass)
+QString gateNote(const monitoring::TestOutcome &outcome) {
+  if (!outcome.frameRateGateInoperative)
     return QString();
-  const QString quality = outcome.recQuality.empty()
-                              ? QStringLiteral("profile default")
-                              : QString::fromStdString(outcome.recQuality);
-  if (outcome.recordingMeasured) {
-    const monitoring::AttemptRecord &r = outcome.recordingAttempt;
-    const monitoring::Metrics &m = r.metrics;
-    return QStringLiteral(
-               "\n\nRecording encoder check (recording quality %1): %2 "
-               "frames, rendering lag %3%, encoder skipped %4%, %5 fps "
-               "— %6. This pass measures the separate encoder your "
-               "recordings use; nothing was adjusted for it.")
-        .arg(quality)
-        .arg(m.totalFrames)
-        .arg(r.stability.laggedPercent, 0, 'f', 2)
-        .arg(r.stability.skippedPercent, 0, 'f', 2)
-        .arg(m.averageFps, 0, 'f', 1)
-        .arg(tierWordForKind(outcome.recordingKind));
-  }
-  if (outcome.recordingKind == monitoring::TestOutcome::Kind::Error &&
-      !outcome.recordingError.empty())
-    return QStringLiteral("\n\nThe recording-encoder check couldn't "
-                          "run: %1")
-        .arg(QString::fromStdString(outcome.recordingError));
-  return QString();
+  return QStringLiteral("\n\nNote: the frame-rate part of the check "
+                        "couldn't run (OBS didn't report a target frame "
+                        "rate), so this verdict is based on dropped-frame "
+                        "percentages only.");
 }
 
 } // namespace
@@ -101,23 +92,42 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
   setWindowTitle(QStringLiteral("OBS Quickstart — Stability Check"));
   setMinimumWidth(460);
 
-  m_headingLabel =
-      new QLabel(QStringLiteral("Making sure your PC can handle streaming…"));
+  // The intro's shape depends on the profile, using the same
+  // effective-value rules the monitor applies: missing Output/Mode
+  // reads as Simple; a RecQuality user value of "Stream" means
+  // recordings share the streaming encoder.
+  bool advanced = false;
+  bool sharedEncoder = false;
+  if (config_t *config = obs_frontend_get_profile_config()) {
+    const char *mode = config_get_string(config, "Output", "Mode");
+    advanced =
+        mode && QString::fromUtf8(mode).compare(QStringLiteral("Advanced"),
+                                                Qt::CaseInsensitive) == 0;
+    if (config_has_user_value(config, "SimpleOutput", "RecQuality")) {
+      const char *q = config_get_string(config, "SimpleOutput", "RecQuality");
+      sharedEncoder = q && QString::fromUtf8(q) == QStringLiteral("Stream");
+    }
+  }
+
+  m_headingLabel = new QLabel(
+      QStringLiteral("Let's make sure your PC can handle your setup."));
   m_headingLabel->setWordWrap(true);
-  m_attemptLabel = new QLabel(
-      QStringLiteral("Recording short local tests — nothing is streamed "
-                     "live. Test recordings are usually deleted "
-                     "afterwards; if one can't be removed safely, the "
-                     "results will say where it is."));
+  m_attemptLabel = new QLabel;
   m_attemptLabel->setWordWrap(true);
   m_progressBar = new QProgressBar;
   m_progressBar->setRange(0, 1000);
   m_progressBar->setValue(0);
+  m_progressBar->hide();
   m_statsLabel = new QLabel;
+  m_statsLabel->hide();
   m_bodyLabel = new QLabel;
   m_bodyLabel->setWordWrap(true);
   m_bodyLabel->hide();
 
+  m_streamingOnlyCheck = new QCheckBox(
+      QStringLiteral("I don't plan to record — only check that my PC "
+                     "can stream"));
+  m_startButton = new QPushButton(QStringLiteral("Start check"));
   m_cancelButton = new QPushButton(QStringLiteral("Cancel"));
   m_wizardButton =
       new QPushButton(QStringLiteral("Re-run Auto-Configuration Wizard"));
@@ -130,15 +140,55 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
   m_closeButton = new QPushButton(QStringLiteral("Close"));
   m_closeButton->hide();
 
+  if (advanced) {
+    m_attemptLabel->setText(
+        QStringLiteral("This profile uses OBS's Advanced output mode, so "
+                       "this check measures your recording output only — "
+                       "it can't test a separate streaming encoder or "
+                       "adjust presets in Advanced mode, and test "
+                       "recordings are reported rather than deleted.\n\n"
+                       "It usually takes under a minute. Nothing is "
+                       "streamed live."));
+    m_streamingOnlyCheck->hide();
+  } else if (sharedEncoder) {
+    m_attemptLabel->setText(
+        QStringLiteral("We're going to check that your computer can "
+                       "stream at your current settings. Your recordings "
+                       "use the same encoder as your stream, so this one "
+                       "check covers both.\n\n"
+                       "This usually takes under a minute, but it can "
+                       "take up to three minutes if your PC needs the "
+                       "test to retry at lighter settings. Nothing is "
+                       "streamed live — the test makes a short local "
+                       "recording and deletes it afterwards; if it can't "
+                       "be removed safely, the results will say where "
+                       "it is."));
+    m_streamingOnlyCheck->hide();
+  } else {
+    m_attemptLabel->setText(
+        QStringLiteral("We're going to check that your computer can "
+                       "stream and record at the same time, at your "
+                       "current settings.\n\n"
+                       "This usually takes under a minute, but it can "
+                       "take up to three minutes if your PC needs the "
+                       "test to retry at lighter settings. Nothing is "
+                       "streamed live — the test makes short local "
+                       "recordings and deletes them afterwards; if one "
+                       "can't be removed safely, the results will say "
+                       "where it is."));
+  }
+
   auto *layout = new QVBoxLayout(this);
   layout->addWidget(m_headingLabel);
   layout->addWidget(m_attemptLabel);
+  layout->addWidget(m_streamingOnlyCheck);
   layout->addWidget(m_progressBar);
   layout->addWidget(m_statsLabel);
   layout->addWidget(m_bodyLabel);
   layout->addWidget(m_wizardButton);
   layout->addWidget(m_fallbackButton);
   layout->addWidget(m_restoreButton);
+  layout->addWidget(m_startButton);
   layout->addWidget(m_cancelButton);
   layout->addWidget(m_closeButton);
 
@@ -146,10 +196,10 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
           &StabilityDialog::onProgress);
   connect(&m_monitor, &monitoring::StabilityMonitor::attemptStarted, this,
           &StabilityDialog::onAttemptStarted);
-  connect(&m_monitor, &monitoring::StabilityMonitor::passStarted, this,
-          &StabilityDialog::onPassStarted);
   connect(&m_monitor, &monitoring::StabilityMonitor::finished, this,
           &StabilityDialog::onFinished);
+  connect(m_startButton, &QPushButton::clicked, this,
+          &StabilityDialog::onStartClicked);
   connect(m_cancelButton, &QPushButton::clicked, this,
           &StabilityDialog::onCancelClicked);
   connect(m_wizardButton, &QPushButton::clicked, this,
@@ -167,9 +217,9 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
 }
 
 void StabilityDialog::startCheck() {
-  m_running = true;
-  m_uiTimer->start();
-  m_monitor.start();
+  // The intro screen is the initial state; the check itself starts
+  // from onStartClicked().
+  m_startButton->setFocus();
 }
 
 void StabilityDialog::reject() {
@@ -180,6 +230,22 @@ void StabilityDialog::reject() {
   QDialog::reject();
 }
 
+void StabilityDialog::onStartClicked() {
+  const bool streamingOnly =
+      m_streamingOnlyCheck->isVisible() && m_streamingOnlyCheck->isChecked();
+  m_started = true;
+  m_running = true;
+  m_streamingOnlyCheck->hide();
+  m_startButton->hide();
+  m_progressBar->show();
+  m_statsLabel->show();
+  m_headingLabel->setText(
+      QStringLiteral("Making sure your PC can handle streaming…"));
+  m_uiTimer->start();
+  m_monitor.start(streamingOnly);
+  refreshProgressUi();
+}
+
 void StabilityDialog::onProgress(int, double fps, double cpuPercent) {
   m_statsLabel->setText(QStringLiteral("FPS: %1   CPU: %2%")
                             .arg(fps, 0, 'f', 1)
@@ -187,69 +253,53 @@ void StabilityDialog::onProgress(int, double fps, double cpuPercent) {
 }
 
 void StabilityDialog::onAttemptStarted(int attempt, int maxAttempts) {
-  m_attemptInPass = attempt;
-  m_maxAttemptsInPass = maxAttempts;
-  refreshProgressUi();
-}
-
-void StabilityDialog::onPassStarted(int passIndex, int passCount,
-                                    bool recordingPass) {
-  m_passIndex = passIndex;
-  m_passCount = passCount;
-  m_recordingPass = recordingPass;
-  m_attemptInPass = 1;
-  m_maxAttemptsInPass = 1;
+  m_attempt = attempt;
+  m_maxAttempts = maxAttempts;
   refreshProgressUi();
 }
 
 void StabilityDialog::refreshProgressUi() {
   if (!m_running)
     return;
-  // Phase line + countdown.
   if (m_monitor.settling()) {
     m_attemptLabel->setText(
-        QStringLiteral("Finishing up — cleaning up the test recording…"));
+        QStringLiteral("Finishing up — cleaning up the test recordings…"));
   } else {
-    const int remaining = m_monitor.stepSecondsRemaining();
     QString phase;
-    if (m_recordingPass) {
-      phase = m_passCount > 1
-                  ? QStringLiteral("Step %1 of %2 — testing your recording "
-                                   "encoder.")
-                        .arg(m_passIndex + 1)
-                        .arg(m_passCount)
-                  : QStringLiteral("Testing your recording encoder.");
-    } else {
-      phase = m_passCount > 1
-                  ? QStringLiteral("Step %1 of %2 — testing your streaming "
-                                   "encoder.")
-                        .arg(m_passIndex + 1)
-                        .arg(m_passCount)
-                  : QStringLiteral("Testing your streaming encoder.");
-    }
-    if (m_attemptInPass > 1)
+    if (m_monitor.combinedMode())
+      phase = QStringLiteral("Testing streaming and recording together.");
+    else if (m_monitor.streamingOnlyMode())
+      phase = QStringLiteral("Testing your streaming encoder.");
+    else if (m_monitor.sharedEncoderMode())
+      phase = QStringLiteral(
+          "Testing your streaming encoder (your recordings use it too).");
+    else if (m_monitor.advancedMode())
+      phase = QStringLiteral("Testing your recording output.");
+    else
+      phase = QStringLiteral("Testing…");
+    if (m_attempt > 1)
       phase +=
           QStringLiteral(
               " The encoder preset was stepped down to make encoding cheaper, "
               "and the test is running again (attempt %1 of up to %2).")
-              .arg(m_attemptInPass)
-              .arg(m_maxAttemptsInPass);
-    else if (!m_recordingPass && m_maxAttemptsInPass > 1)
+              .arg(m_attempt)
+              .arg(m_maxAttempts);
+    else if (m_maxAttempts > 1)
       phase +=
           QStringLiteral(
               " If your PC can't keep up, the encoder preset steps down and "
               "the test retries (attempt %1 of up to %2).")
-              .arg(m_attemptInPass)
-              .arg(m_maxAttemptsInPass);
+              .arg(m_attempt)
+              .arg(m_maxAttempts);
+    const int remaining = m_monitor.stepSecondsRemaining();
     if (remaining >= 0)
       phase +=
           QStringLiteral(" About %1 seconds left in this step.").arg(remaining);
     m_attemptLabel->setText(phase);
   }
-  // Overall bar: completed passes + this pass's fraction, where a
-  // pass's fraction is attempts done plus the current step's
-  // progress. Monotonic clamp: retries revise the estimate, and the
-  // bar must never run backwards or promise a total time.
+  // Overall bar: attempts done plus the current step's progress.
+  // Monotonic clamp: retries revise the estimate, and the bar must
+  // never run backwards or promise a total time.
   double stepFrac = 0.0;
   if (m_monitor.settling()) {
     stepFrac = 1.0;
@@ -259,11 +309,9 @@ void StabilityDialog::refreshProgressUi() {
       stepFrac = 1.0 - static_cast<double>(remaining) /
                            monitoring::TEST_DURATION_SECONDS;
   }
-  const double passFrac =
-      (static_cast<double>(m_attemptInPass - 1) + stepFrac) /
-      static_cast<double>(m_maxAttemptsInPass > 0 ? m_maxAttemptsInPass : 1);
-  const double overall = (static_cast<double>(m_passIndex) + passFrac) /
-                         static_cast<double>(m_passCount > 0 ? m_passCount : 1);
+  const double overall =
+      (static_cast<double>(m_attempt - 1) + stepFrac) /
+      static_cast<double>(m_maxAttempts > 0 ? m_maxAttempts : 1);
   const int value = static_cast<int>(overall * 1000.0);
   if (value > m_barValue) {
     m_barValue = value;
@@ -277,21 +325,21 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
   m_lastOutcome = outcome;
   const QString cleanup = QString::fromStdString(outcome.cleanupNote);
   using Kind = monitoring::TestOutcome::Kind;
+  using FailedSide = monitoring::FailedSide;
   switch (outcome.kind) {
   case Kind::Stable: {
     QString body;
     if (outcome.advancedMode)
       body += QStringLiteral(
           "This profile uses OBS's Advanced output mode, so the check "
-          "measured your recording output only — it doesn't adjust "
-          "presets in Advanced mode, and test files are reported rather "
-          "than deleted.\n\n");
+          "measured your recording output only.\n\n");
     body += attemptsSummary(outcome);
     if (outcome.finalPreset != outcome.originalPreset)
       body += QStringLiteral("\n\nYour encoder preset was stepped down to "
                              "%1 to reach a stable result, and it stays "
                              "there — that's the setting that passed.")
                   .arg(QString::fromStdString(outcome.finalPreset));
+    body += recordingSection(outcome);
     body += QStringLiteral(
         "\n\nThis check ran with nothing else heavy on your PC — no game "
         "was running. If you later drop frames while gaming, the game is "
@@ -301,12 +349,7 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
           "\n\nYour recordings use the same encoder as your stream "
           "(recording quality is 'same as stream'), so this one check "
           "covered both.");
-    body += recordingSection(outcome);
-    if (outcome.frameRateGateInoperative)
-      body += QStringLiteral(
-          "\n\nNote: the frame-rate part of the check couldn't run (OBS "
-          "didn't report a target frame rate), so this verdict is based "
-          "on dropped-frame percentages only.");
+    body += gateNote(outcome);
     if (!cleanup.isEmpty())
       body += QStringLiteral("\n\n") + cleanup;
     showResults(outcome.advancedMode
@@ -316,8 +359,21 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
     break;
   }
   case Kind::Marginal: {
-    QString body = attemptsSummary(outcome);
-    if (outcome.presetRestoreFailed) {
+    QString body;
+    if (outcome.failedSide == FailedSide::Recording) {
+      // Streaming passed; the simultaneous recording side was
+      // borderline. Nothing was stepped, so there is nothing to
+      // restore — say what actually happened.
+      body += attemptsSummary(outcome);
+      body += recordingSection(outcome);
+      body += QStringLiteral(
+          "\n\nYour streaming passed. Recording at the same time was "
+          "right at the edge: it dropped a few frames, but not many. One "
+          "30-second test on a busy PC can look like this — close other "
+          "heavy apps and run the check again; if it keeps landing here, "
+          "the follow-ups below can lighten your settings.");
+    } else if (outcome.presetRestoreFailed) {
+      body += attemptsSummary(outcome);
       body += QStringLiteral(
                   "\n\nYour PC was right at the edge: it dropped a few "
                   "frames, but not many. The test had stepped your encoder "
@@ -327,7 +383,9 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
                   "> Output.")
                   .arg(QString::fromStdString(outcome.finalPreset),
                        QString::fromStdString(outcome.originalPreset));
+      body += recordingSection(outcome);
     } else {
+      body += attemptsSummary(outcome);
       body += QStringLiteral(
                   "\n\nYour PC was right at the edge: it dropped a few frames, "
                   "but not many. One 30-second test on a busy PC can look like "
@@ -336,12 +394,9 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
                   "keeps landing here, the follow-ups below can lighten your "
                   "settings.")
                   .arg(QString::fromStdString(outcome.originalPreset));
+      body += recordingSection(outcome);
     }
-    body += recordingSection(outcome);
-    if (outcome.frameRateGateInoperative)
-      body += QStringLiteral(
-          "\n\nNote: the frame-rate part of the check couldn't run, so "
-          "this verdict is based on dropped-frame percentages only.");
+    body += gateNote(outcome);
     if (!cleanup.isEmpty())
       body += QStringLiteral("\n\n") + cleanup;
     showResults(QStringLiteral("Your setup is borderline."), body, true,
@@ -350,54 +405,75 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
   }
   case Kind::Unstable: {
     QString body;
-    if (outcome.advancedMode)
+    if (outcome.advancedMode) {
       body += QStringLiteral(
           "This profile uses OBS's Advanced output mode, so the check "
           "measured your recording output only — it doesn't adjust "
           "presets in Advanced mode, and test files are reported rather "
           "than deleted.\n\n");
-    body += attemptsSummary(outcome);
-    if (outcome.finalPreset != outcome.originalPreset) {
+      body += attemptsSummary(outcome);
       body += QStringLiteral(
-                  "\n\nOne thing DID change during the test: to make "
-                  "encoding cheaper, your encoder preset was stepped from "
-                  "%1 down to %2, and it is still %2 now. Use the restore "
-                  "button below to put %1 back, or leave it — %2 is "
-                  "easier on your PC. Nothing else was changed.")
-                  .arg(QString::fromStdString(outcome.originalPreset),
-                       QString::fromStdString(outcome.finalPreset));
-    }
-    if (outcome.presetGoverned) {
-      body +=
-          QStringLiteral(
-              "\n\nEven at the fastest encoder setting tried (%1), your PC "
-              "dropped too many frames. You can also re-run OBS's "
-              "Auto-Configuration Wizard and let it pick lighter settings, or "
-              "apply a conservative fallback (720p30 at 2500 kbps, x264 "
-              "ultrafast) — those two only happen if you pick them.")
-              .arg(QString::fromStdString(outcome.finalPreset));
+          "\n\nYour recording encoder runs at settings this test can't "
+          "adjust, and your PC dropped too many frames with it. "
+          "Re-running OBS's Auto-Configuration Wizard or applying the "
+          "conservative fallback below can lighten your settings — those "
+          "only happen if you pick them.");
+    } else if (outcome.failedSide == FailedSide::Recording) {
+      body += attemptsSummary(outcome);
+      body += recordingSection(outcome);
+      body += QStringLiteral(
+          "\n\nYour PC kept up with streaming, but recording in high "
+          "quality at the same time dropped too many frames. One fix is "
+          "to record at the same quality as your stream — in OBS "
+          "Settings > Output, set Recording Quality to 'Same as "
+          "stream'. That runs one encode instead of two. The follow-ups "
+          "below can also lighten your settings.");
     } else {
-      const char *display =
-          outcome.encoderId.empty()
-              ? nullptr
-              : obs_encoder_get_display_name(outcome.encoderId.c_str());
-      body += QStringLiteral(
-                  "\n\nYour %1 encoder (%2) runs at a preset this "
-                  "test can't adjust, and your PC dropped too many frames "
-                  "with it, so there was nothing to retry at a cheaper "
-                  "setting. Re-running OBS's Auto-Configuration Wizard or "
-                  "applying the conservative fallback below can lighten "
-                  "your settings — those only happen if you pick them.")
-                  .arg(outcome.advancedMode ? QStringLiteral("recording")
-                                            : QStringLiteral("streaming"))
-                  .arg(display ? QString::fromUtf8(display)
-                               : QString::fromStdString(outcome.encoderId));
+      body += attemptsSummary(outcome);
+      if (outcome.finalPreset != outcome.originalPreset) {
+        body += QStringLiteral(
+                    "\n\nOne thing DID change during the test: to make "
+                    "encoding cheaper, your encoder preset was stepped from "
+                    "%1 down to %2, and it is still %2 now. Use the restore "
+                    "button below to put %1 back, or leave it — %2 is "
+                    "easier on your PC. Nothing else was changed.")
+                    .arg(QString::fromStdString(outcome.originalPreset),
+                         QString::fromStdString(outcome.finalPreset));
+      }
+      if (outcome.presetGoverned) {
+        body += QStringLiteral(
+                    "\n\nEven at the fastest encoder setting tried (%1), your "
+                    "PC dropped too many frames. You can also re-run OBS's "
+                    "Auto-Configuration Wizard and let it pick lighter "
+                    "settings, or apply a conservative fallback (720p30 at "
+                    "2500 kbps, x264 ultrafast) — those two only happen if you "
+                    "pick them.")
+                    .arg(QString::fromStdString(outcome.finalPreset));
+      } else {
+        const char *display =
+            outcome.encoderId.empty()
+                ? nullptr
+                : obs_encoder_get_display_name(outcome.encoderId.c_str());
+        body += QStringLiteral(
+                    "\n\nYour streaming encoder (%1) runs at a preset this "
+                    "test can't adjust, and your PC dropped too many frames "
+                    "with it, so there was nothing to retry at a cheaper "
+                    "setting. Re-running OBS's Auto-Configuration Wizard or "
+                    "applying the conservative fallback below can lighten "
+                    "your settings — those only happen if you pick them.")
+                    .arg(display ? QString::fromUtf8(display)
+                                 : QString::fromStdString(outcome.encoderId));
+      }
+      if (outcome.failedSide == FailedSide::Both) {
+        body += recordingSection(outcome);
+        body += QStringLiteral(
+            "\n\nRecording at the same time dropped too many frames too "
+            "— the combined load is the problem, not one side alone.");
+      } else {
+        body += recordingSection(outcome);
+      }
     }
-    body += recordingSection(outcome);
-    if (outcome.frameRateGateInoperative)
-      body += QStringLiteral(
-          "\n\nNote: the frame-rate part of the check couldn't run, so "
-          "this verdict is based on dropped-frame percentages only.");
+    body += gateNote(outcome);
     if (!cleanup.isEmpty())
       body += QStringLiteral("\n\n") + cleanup;
     showResults(QStringLiteral("Your PC couldn't keep up at these settings."),
@@ -433,6 +509,8 @@ void StabilityDialog::showResults(const QString &heading, const QString &body,
                                   bool offerFollowUps, bool offerRestore) {
   m_headingLabel->setText(heading);
   m_attemptLabel->hide();
+  m_streamingOnlyCheck->hide();
+  m_startButton->hide();
   m_progressBar->hide();
   m_statsLabel->hide();
   m_cancelButton->hide();
@@ -475,6 +553,10 @@ void StabilityDialog::onRestoreClicked() {
 }
 
 void StabilityDialog::onCancelClicked() {
+  if (!m_started) {
+    QDialog::reject();
+    return;
+  }
   m_cancelButton->setEnabled(false);
   m_cancelButton->setText(QStringLiteral("Cancelling…"));
   m_monitor.cancel();
