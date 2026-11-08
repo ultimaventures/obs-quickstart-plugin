@@ -9,6 +9,7 @@ class QCheckBox;
 class QLabel;
 class QProgressBar;
 class QPushButton;
+class QScrollArea;
 class QTimer;
 
 namespace obs_setup {
@@ -70,8 +71,12 @@ private slots:
   void refreshProgressUi();
 
 private:
+  /** restoreLabel empty = no restore/override button. The label is
+   *  supplied by the caller: its meaning differs by outcome (an
+   *  override of a kept step vs a repair of a failed auto-restore). */
   void showResults(const QString &heading, const QString &body,
-                   bool offerFollowUps, bool offerRestore = false);
+                   bool offerFollowUps,
+                   const QString &restoreLabel = QString());
 
   monitoring::StabilityMonitor m_monitor;
   monitoring::TestOutcome m_lastOutcome;
@@ -79,6 +84,9 @@ private:
   QLabel *m_attemptLabel = nullptr;
   QLabel *m_statsLabel = nullptr;
   QLabel *m_bodyLabel = nullptr;
+  /** Scroll container for m_bodyLabel: long results must scroll,
+   *  never clip (the clipped lines were the cleanup report). */
+  QScrollArea *m_bodyScroll = nullptr;
   QProgressBar *m_progressBar = nullptr;
   QCheckBox *m_streamingOnlyCheck = nullptr;
   QPushButton *m_startButton = nullptr;

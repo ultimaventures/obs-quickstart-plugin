@@ -36,6 +36,12 @@ struct AttemptRecord {
 };
 
 /** Which side of a combined check failed (dialog copy keys off it). */
+/**
+ * Which side failed. In combined mode the two sides share OBS's
+ * single pipeline skipped-frames counter, so their tiers move
+ * together and a combined failure reports Both; the Recording-only
+ * value remains for the (defensive) case the tiers ever diverge.
+ */
 enum class FailedSide { None, Streaming, Recording, Both };
 
 /** Final result of a stability check, delivered via finished(). */
@@ -104,7 +110,17 @@ struct TestOutcome {
    *  so the frontend recording measured both sides at once and no
    *  separate recording verdict exists. */
   bool recordingSharesStreamingEncoder = false;
-  /** The recording side produced a measured verdict (combined). */
+  /**
+   * The recording side ran and was measured (combined). NOTE on what
+   * "measured" can mean here: libobs keeps ONE skipped-frames
+   * counter for the whole video pipeline (video-io root counter), so
+   * recordingAttempt's metrics are the combined window's metrics —
+   * the same counters the streaming record reads — not an
+   * independent per-encoder measurement. recordingKind therefore
+   * moves with the headline tier in combined mode; the dialog
+   * presents combined results as one measurement of the pair and
+   * never as two verdicts.
+   */
   bool recordingMeasured = false;
   Kind recordingKind = Kind::Error;
   AttemptRecord recordingAttempt;
@@ -140,11 +156,14 @@ struct TestOutcome {
  *   encoder) AND a StreamingProbe — the plugin's own encoder built
  *   with the profile's streaming settings — record SIMULTANEOUSLY
  *   for 30 seconds, the load a stream-and-record session actually
- *   imposes. The streaming verdict comes from the probe, the
- *   recording verdict from the frontend output, both over the same
- *   window. Retries step only the streaming preset (the probe is
- *   rebuilt with it); the recording verdict is read from the first
- *   attempt, where the user's real streaming preset was in force.
+ *   imposes, and the verdict is a verdict on the PAIR: OBS counts
+ *   encoding-skipped frames once for the whole video pipeline, not
+ *   per encoder, so no per-side split exists to report (attribution
+ *   comes from the stepping retries — if a step fixes it, the
+ *   streaming side was the strain). Retries step only the streaming
+ *   preset (the probe is rebuilt with it); the combined record is
+ *   read from the first attempt, where the user's real streaming
+ *   preset was in force.
  * - Streaming-only (user's pre-test choice): the probe alone.
  * - "Stream" recording quality: the frontend recording output IS
  *   the streaming encoder — it is measured directly (governed, as

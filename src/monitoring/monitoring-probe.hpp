@@ -77,7 +77,15 @@ public:
    *  stay alive until final metrics are sampled. */
   void stopOutput();
   bool active() const;
-  /** The probe encoder's skipped-frame counter (its video output). */
+  /**
+   * Skipped frames read through the probe encoder's video — which in
+   * libobs is the video PIPELINE's single counter
+   * (video_output_get_skipped_frames resolves to the root video
+   * output; there is no per-encoder skipped counter). In
+   * streaming-only mode the probe is the only encoder running, so
+   * the value is the probe's; in combined mode it is the pair's
+   * combined encoding-lag figure, and the monitor treats it that way.
+   */
   uint32_t skippedFrames() const;
   const std::string &encoderId() const { return m_encoderId; }
   /** The running encoder's own preset readback ("" if it reports

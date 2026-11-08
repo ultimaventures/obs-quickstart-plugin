@@ -12,6 +12,7 @@
 #include <util/config-file.h>
 #include <util/platform.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <filesystem>
@@ -845,11 +846,18 @@ void StabilityMonitor::finish(TestOutcome::Kind kind,
   if (!detail.empty())
     m_outcome.detail = detail;
   m_outcome.finalPreset = m_currentPreset;
+  // One line per DISTINCT cleanup outcome: a three-attempt run
+  // otherwise repeats "Both test recordings were deleted." three
+  // times. Distinct notes (different left-in-place paths) all stay.
   std::string note;
-  for (size_t i = 0; i < m_cleanupNotes.size(); ++i) {
-    if (i)
-      note += "\n";
-    note += m_cleanupNotes[i];
+  std::vector<std::string> seen;
+  for (const std::string &line : m_cleanupNotes) {
+    if (std::find(seen.begin(), seen.end(), line) == seen.end()) {
+      seen.push_back(line);
+      if (!note.empty())
+        note += "\n";
+      note += line;
+    }
   }
   m_outcome.cleanupNote = note;
   emit finished(m_outcome);

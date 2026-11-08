@@ -5,6 +5,8 @@
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QStringList>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -55,26 +57,29 @@ QString attemptsSummary(const monitoring::TestOutcome &outcome) {
   return lines.join('\n');
 }
 
-/** The simultaneous recording side's report block (combined mode). */
+/**
+ * Combined-mode measurement note. There is deliberately no separate
+ * "recording verdict" block: OBS counts frames skipped by encoding
+ * ONCE for the whole video pipeline, not per encoder (libobs
+ * video-io: video_output_get_skipped_frames reads the counter on the
+ * root video output — verified in the 30.0.2 and 31.1.1 sources), so
+ * in combined mode the attempt numbers ARE the pair's numbers, and
+ * printing them a second time as a recording verdict would invent a
+ * distinction the measurement doesn't contain. Attribution between
+ * the two sides comes from the stepping retries, and the note says
+ * so.
+ */
 QString recordingSection(const monitoring::TestOutcome &outcome) {
   if (!outcome.combinedMode || !outcome.recordingMeasured)
     return QString();
-  const monitoring::AttemptRecord &r = outcome.recordingAttempt;
-  const monitoring::Metrics &m = r.metrics;
-  const QString quality =
-      outcome.recQuality.empty()
-          ? QStringLiteral("your recording quality")
-          : QStringLiteral("recording quality %1")
-                .arg(QString::fromStdString(outcome.recQuality));
-  return QStringLiteral("\n\nRecording at the same time (%1): %2 frames, "
-                        "rendering lag %3%, encoder skipped %4%, %5 fps "
-                        "— %6.")
-      .arg(quality)
-      .arg(m.totalFrames)
-      .arg(r.stability.laggedPercent, 0, 'f', 2)
-      .arg(r.stability.skippedPercent, 0, 'f', 2)
-      .arg(m.averageFps, 0, 'f', 1)
-      .arg(verdictWord(r.stability.tier));
+  return QStringLiteral(
+      "\n\nStreaming and recording were measured together, in the same "
+      "30 seconds. OBS counts frames skipped by encoding for the whole "
+      "video pipeline, not per encoder, so the numbers above are the "
+      "pair's numbers. That's why the retries step the streaming "
+      "encoder down: if a step fixes it, the streaming side was the "
+      "strain; if no step fixes it, the recording encode is the other "
+      "half of the load.");
 }
 
 QString gateNote(const monitoring::TestOutcome &outcome) {
@@ -122,7 +127,19 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
   m_statsLabel->hide();
   m_bodyLabel = new QLabel;
   m_bodyLabel->setWordWrap(true);
+  m_bodyLabel->setAlignment(Qt::AlignTop);
   m_bodyLabel->hide();
+  // Results text can outgrow the screen (three attempt lines plus
+  // explanations); a plain label in a height-capped dialog clips its
+  // last lines SILENTLY — exactly the lines that report cleanup and
+  // caveats — so the body lives in a scroll area with a height cap.
+  m_bodyScroll = new QScrollArea;
+  m_bodyScroll->setWidget(m_bodyLabel);
+  m_bodyScroll->setWidgetResizable(true);
+  m_bodyScroll->setFrameShape(QFrame::NoFrame);
+  m_bodyScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  m_bodyScroll->setMaximumHeight(430);
+  m_bodyScroll->hide();
 
   m_streamingOnlyCheck = new QCheckBox(
       QStringLiteral("I don't plan to record — only check that my PC "
@@ -184,7 +201,7 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
   layout->addWidget(m_streamingOnlyCheck);
   layout->addWidget(m_progressBar);
   layout->addWidget(m_statsLabel);
-  layout->addWidget(m_bodyLabel);
+  layout->addWidget(m_bodyScroll);
   layout->addWidget(m_wizardButton);
   layout->addWidget(m_fallbackButton);
   layout->addWidget(m_restoreButton);
@@ -335,10 +352,19 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
           "measured your recording output only.\n\n");
     body += attemptsSummary(outcome);
     if (outcome.finalPreset != outcome.originalPreset)
-      body += QStringLiteral("\n\nYour encoder preset was stepped down to "
-                             "%1 to reach a stable result, and it stays "
-                             "there — that's the setting that passed.")
-                  .arg(QString::fromStdString(outcome.finalPreset));
+      body += QStringLiteral(
+                  "\n\nYour PC struggled at your original streaming "
+                  "preset (%1) — it dropped too many frames there. The "
+                  "test lowered the streaming encoder preset to %2 and "
+                  "your PC kept up, so %2 is what's set now; that's the "
+                  "only change the test made. A cheaper preset asks less "
+                  "of your PC — the picture can be slightly less sharp "
+                  "in fast motion. If you'd rather keep %1, use 'Go "
+                  "back to %1 anyway' below — but at %1 this PC "
+                  "dropped frames in the test, so a real stream would "
+                  "likely stutter or drop frames too.")
+                  .arg(QString::fromStdString(outcome.originalPreset),
+                       QString::fromStdString(outcome.finalPreset));
     body += recordingSection(outcome);
     body += QStringLiteral(
         "\n\nThis check ran with nothing else heavy on your PC — no game "
@@ -355,7 +381,11 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
     showResults(outcome.advancedMode
                     ? QStringLiteral("Your recording setup passed the check.")
                     : QStringLiteral("Your setup passed the stability check."),
-                body, false);
+                body, false,
+                outcome.finalPreset != outcome.originalPreset
+                    ? QStringLiteral("Go back to %1 anyway")
+                          .arg(QString::fromStdString(outcome.originalPreset))
+                    : QString());
     break;
   }
   case Kind::Marginal: {
@@ -365,7 +395,6 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
       // borderline. Nothing was stepped, so there is nothing to
       // restore — say what actually happened.
       body += attemptsSummary(outcome);
-      body += recordingSection(outcome);
       body += QStringLiteral(
           "\n\nYour streaming passed. Recording at the same time was "
           "right at the edge: it dropped a few frames, but not many. One "
@@ -400,7 +429,10 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
     if (!cleanup.isEmpty())
       body += QStringLiteral("\n\n") + cleanup;
     showResults(QStringLiteral("Your setup is borderline."), body, true,
-                outcome.presetRestoreFailed);
+                outcome.presetRestoreFailed
+                    ? QStringLiteral("Restore my original encoder preset (%1)")
+                          .arg(QString::fromStdString(outcome.originalPreset))
+                    : QString());
     break;
   }
   case Kind::Unstable: {
@@ -420,7 +452,6 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
           "only happen if you pick them.");
     } else if (outcome.failedSide == FailedSide::Recording) {
       body += attemptsSummary(outcome);
-      body += recordingSection(outcome);
       body += QStringLiteral(
           "\n\nYour PC kept up with streaming, but recording in high "
           "quality at the same time dropped too many frames. One fix is "
@@ -433,10 +464,12 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
       if (outcome.finalPreset != outcome.originalPreset) {
         body += QStringLiteral(
                     "\n\nOne thing DID change during the test: to make "
-                    "encoding cheaper, your encoder preset was stepped from "
-                    "%1 down to %2, and it is still %2 now. Use the restore "
-                    "button below to put %1 back, or leave it — %2 is "
-                    "easier on your PC. Nothing else was changed.")
+                    "encoding cheaper, your streaming encoder preset was "
+                    "stepped from %1 down to %2, and it is still %2 now — "
+                    "%2 is easier on your PC. You can go back to %1 with "
+                    "the button below, but at %1 your PC dropped even "
+                    "more frames, so a real stream would likely stutter "
+                    "too. Nothing else was changed.")
                     .arg(QString::fromStdString(outcome.originalPreset),
                          QString::fromStdString(outcome.finalPreset));
       }
@@ -464,20 +497,25 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
                     .arg(display ? QString::fromUtf8(display)
                                  : QString::fromStdString(outcome.encoderId));
       }
-      if (outcome.failedSide == FailedSide::Both) {
-        body += recordingSection(outcome);
+      body += recordingSection(outcome);
+      if (outcome.combinedMode) {
         body += QStringLiteral(
-            "\n\nRecording at the same time dropped too many frames too "
-            "— the combined load is the problem, not one side alone.");
-      } else {
-        body += recordingSection(outcome);
+            "\n\nOne more option targets the recording side: recording "
+            "at the same quality as your stream runs ONE encode instead "
+            "of two, which is much easier on your PC. If you want that, "
+            "set Recording Quality to 'Same as stream' in OBS Settings "
+            "> Output.");
       }
     }
     body += gateNote(outcome);
     if (!cleanup.isEmpty())
       body += QStringLiteral("\n\n") + cleanup;
     showResults(QStringLiteral("Your PC couldn't keep up at these settings."),
-                body, true, outcome.finalPreset != outcome.originalPreset);
+                body, true,
+                outcome.finalPreset != outcome.originalPreset
+                    ? QStringLiteral("Go back to %1 anyway")
+                          .arg(QString::fromStdString(outcome.originalPreset))
+                    : QString());
     break;
   }
   case Kind::Busy:
@@ -506,7 +544,8 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
 }
 
 void StabilityDialog::showResults(const QString &heading, const QString &body,
-                                  bool offerFollowUps, bool offerRestore) {
+                                  bool offerFollowUps,
+                                  const QString &restoreLabel) {
   m_headingLabel->setText(heading);
   m_attemptLabel->hide();
   m_streamingOnlyCheck->hide();
@@ -516,12 +555,17 @@ void StabilityDialog::showResults(const QString &heading, const QString &body,
   m_cancelButton->hide();
   m_bodyLabel->setText(body);
   m_bodyLabel->show();
+  m_bodyScroll->show();
+  m_bodyScroll->verticalScrollBar()->setValue(0);
   m_wizardButton->setVisible(offerFollowUps);
   m_fallbackButton->setVisible(offerFollowUps);
-  if (offerRestore) {
-    m_restoreButton->setText(
-        QStringLiteral("Restore my original encoder preset (%1)")
-            .arg(QString::fromStdString(m_lastOutcome.originalPreset)));
+  // The button's label is chosen by the caller because its meaning
+  // differs by outcome: an OVERRIDE on stepped results ("Go back to
+  // %1 anyway" — the user accepts the frame drops the body warns
+  // about), vs a REPAIR after a failed automatic restore on Marginal
+  // ("Restore my original encoder preset"). Same action underneath.
+  if (!restoreLabel.isEmpty()) {
+    m_restoreButton->setText(restoreLabel);
     m_restoreButton->show();
   } else {
     m_restoreButton->hide();
@@ -541,7 +585,12 @@ void StabilityDialog::onRestoreClicked() {
         m_bodyLabel->text() +
         QStringLiteral("\n\nYour encoder preset is back to %1.")
             .arg(QString::fromStdString(m_lastOutcome.originalPreset)));
-    adjustSize();
+    // The confirmation is appended at the end of possibly-scrolled
+    // text; bring it into view (after the label re-lays out).
+    QTimer::singleShot(0, this, [this] {
+      QScrollBar *bar = m_bodyScroll->verticalScrollBar();
+      bar->setValue(bar->maximum());
+    });
   } else {
     QMessageBox::warning(
         this, QStringLiteral("Restore failed"),
