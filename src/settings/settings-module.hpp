@@ -181,10 +181,11 @@ public:
    * fallback lands whole or not at all. Simple mode only: a profile
    * whose Output/Mode is missing or not "Simple" is refused (missing
    * is not treated as Simple — the same rule migrateToAdvancedMode
-   * uses). Profiles carrying user-set FPSNum/FPSDen values are
-   * detected and refused: custom frame timing is out of the
-   * fallback's scope, and scope the code cannot detect is scope it
-   * must not silently claim. This is the stability test's last-resort
+   * uses). Profiles whose FPS selector (Video/FPSType) is Integer or
+   * Fraction are detected and refused: FPSCommon does not govern
+   * their frame rate, so the fallback could not honestly call the
+   * result 720p30. Scope the code cannot detect is scope it must
+   * not silently claim. This is the stability test's last-resort
    * OFFER — the caller must have the user's explicit confirmation
    * before calling.
    *

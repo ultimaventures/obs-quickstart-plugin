@@ -677,12 +677,33 @@ TEST_F(SettingsTest, FallbackRefusesAdvancedMode) {
 }
 
 TEST_F(SettingsTest, FallbackRefusesCustomFpsProfile) {
+  // FPSType 2 = Fraction: FPSNum/FPSDen govern, FPSCommon is inert.
+  g_fakeConfig.ints[{"Video", "FPSType"}] = 2;
   g_fakeConfig.uints[{"Video", "FPSNum"}] = 30000;
   g_fakeConfig.uints[{"Video", "FPSDen"}] = 1001;
   settings::SettingsManager mgr;
   EXPECT_FALSE(mgr.applyConservativeFallback());
   EXPECT_FALSE(g_fakeConfig.saveCalled);
   EXPECT_EQ(g_fakeConfig.strings.count({"Video", "FPSCommon"}), 0u);
+}
+
+TEST_F(SettingsTest, FallbackRefusesIntegerFpsProfile) {
+  // FPSType 1 = Integer: FPSInt governs, FPSCommon is inert.
+  g_fakeConfig.ints[{"Video", "FPSType"}] = 1;
+  g_fakeConfig.ints[{"Video", "FPSInt"}] = 48;
+  settings::SettingsManager mgr;
+  EXPECT_FALSE(mgr.applyConservativeFallback());
+  EXPECT_FALSE(g_fakeConfig.saveCalled);
+}
+
+TEST_F(SettingsTest, FallbackIgnoresStaleFractionValuesUnderCommonSelector) {
+  // Leftover FPSNum/FPSDen user values with the selector on Common
+  // (FPSType absent/0) do not govern anything; the fallback applies.
+  g_fakeConfig.uints[{"Video", "FPSNum"}] = 30000;
+  g_fakeConfig.uints[{"Video", "FPSDen"}] = 1001;
+  settings::SettingsManager mgr;
+  EXPECT_TRUE(mgr.applyConservativeFallback());
+  EXPECT_EQ((g_fakeConfig.strings[{"Video", "FPSCommon"}]), "30");
 }
 
 TEST_F(SettingsTest, FallbackRestoresEverythingOnSaveFailure) {

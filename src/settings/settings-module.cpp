@@ -304,17 +304,20 @@ bool SettingsManager::applyConservativeFallback() {
                     "Simple mode (or mode is unset); fallback refused");
     return false;
   }
-  // The fallback expresses frame rate through FPSCommon only. A
-  // profile carrying user-set FPSNum/FPSDen values uses custom frame
-  // timing those values govern; writing FPSCommon alongside them
-  // would leave the profile in a state this function cannot honestly
-  // describe as 720p30. Detect and refuse — custom-FPS profiles are
-  // out of the fallback's scope, and undetected out-of-scope is the
-  // one unacceptable outcome.
-  if (config_has_user_value(config, "Video", "FPSNum") ||
-      config_has_user_value(config, "Video", "FPSDen")) {
-    blog(LOG_ERROR, "[Settings] applyConservativeFallback: profile uses "
-                    "custom FPS (FPSNum/FPSDen); fallback refused");
+  // The fallback expresses frame rate through FPSCommon only, and
+  // FPSCommon governs ONLY when the profile's FPS selector says so:
+  // Video/FPSType 0 (or absent) = Common, 1 = Integer (FPSInt),
+  // 2 = Fraction (FPSNum/FPSDen) — OBSBasic::GetConfigFPS. On a
+  // profile whose selector is Integer or Fraction, writing
+  // FPSCommon would change nothing while this function reported
+  // 720p30. Detect the selector and refuse; stale FPSNum/FPSDen
+  // values under a Common selector are inert and do NOT block.
+  if (config_has_user_value(config, "Video", "FPSType") &&
+      config_get_int(config, "Video", "FPSType") != 0) {
+    blog(LOG_ERROR,
+         "[Settings] applyConservativeFallback: profile uses "
+         "a non-Common FPS type (FPSType=%lld); fallback refused",
+         static_cast<long long>(config_get_int(config, "Video", "FPSType")));
     return false;
   }
 
