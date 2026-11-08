@@ -94,8 +94,15 @@ private:
   void deleteTestFiles();
   void finish(TestOutcome::Kind kind, const std::string &detail = "");
   std::string recordingDirectory() const;
-  /** filename -> size map of the recording directory. */
+  /** full path -> size map of the recording directory. */
   std::map<std::string, uint64_t> snapshotDirectory() const;
+  /**
+   * The files the current attempt owns: the exact recording path read
+   * from the recording output's own settings (plus its auto-remux
+   * sibling when one appears), or — when that path could not be read —
+   * the new files in the recording directory since the attempt began.
+   */
+  std::map<std::string, uint64_t> currentTestFiles() const;
 
   State m_state = State::Idle;
   QTimer *m_timer = nullptr;
@@ -124,6 +131,8 @@ private:
 
   std::map<std::string, uint64_t> m_dirSnapshot;
   std::map<std::string, uint64_t> m_lastNewFiles;
+  /** Exact path of the test recording, from the output's settings. */
+  std::string m_testFilePath;
 };
 
 } // namespace monitoring
