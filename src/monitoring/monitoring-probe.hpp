@@ -43,8 +43,15 @@ namespace monitoring {
  * same load the streaming encoder would carry, minus the network
  * output's frame-dropping behavior.
  *
- * Video only: the audio encode in a real stream is a small,
- * near-constant cost and is not what the verdict measures.
+ * The probe also carries an FFmpeg AAC encoder (bitrate from
+ * ABitrate): not because audio load matters to the verdict, but
+ * because libobs refuses to start an encoded output whose flags
+ * include AUDIO unless an audio encoder is attached
+ * (obs-output.c: can_begin_data_capture -> audio_valid), and
+ * ffmpeg_muxer's flags include AUDIO. A video-only muxer output
+ * fails obs_output_start SILENTLY — no log line, no last error —
+ * which cost a debugging round to find. The frontend always
+ * attaches an AAC encoder to its file output; so does the probe.
  */
 class StreamingProbe {
 public:
@@ -79,6 +86,7 @@ public:
 
 private:
   obs_encoder_t *m_encoder = nullptr;
+  obs_encoder_t *m_audioEncoder = nullptr;
   obs_output_t *m_output = nullptr;
   std::string m_encoderId;
 };

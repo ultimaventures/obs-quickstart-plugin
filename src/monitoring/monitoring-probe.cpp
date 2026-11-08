@@ -62,6 +62,25 @@ bool StreamingProbe::start(config_t *config, const std::string &preset,
   }
   obs_encoder_set_video(m_encoder, obs_get_video());
 
+  // An audio encoder is REQUIRED for the muxer output to start at
+  // all — see the class comment (libobs can_begin_data_capture).
+  // Same SimpleOutput key the real stream's audio uses.
+  uint64_t audioBitrate = config_get_uint(config, "SimpleOutput", "ABitrate");
+  if (audioBitrate == 0)
+    audioBitrate = 160;
+  obs_data_t *audioSettings = obs_data_create();
+  obs_data_set_int(audioSettings, "bitrate",
+                   static_cast<int64_t>(audioBitrate));
+  m_audioEncoder = obs_audio_encoder_create(
+      "ffmpeg_aac", "quickstart_stream_probe_audio", audioSettings, 0, nullptr);
+  obs_data_release(audioSettings);
+  if (!m_audioEncoder) {
+    error = "Could not create the streaming test audio encoder.";
+    stop();
+    return false;
+  }
+  obs_encoder_set_audio(m_audioEncoder, obs_get_audio());
+
   obs_data_t *outSettings = obs_data_create();
   obs_data_set_string(outSettings, "path", filePath.c_str());
   m_output = obs_output_create("ffmpeg_muxer", "quickstart_stream_probe",
@@ -73,6 +92,7 @@ bool StreamingProbe::start(config_t *config, const std::string &preset,
     return false;
   }
   obs_output_set_video_encoder(m_output, m_encoder);
+  obs_output_set_audio_encoder(m_output, m_audioEncoder, 0);
   if (!obs_output_start(m_output)) {
     const char *lastError = obs_output_get_last_error(m_output);
     error = "The streaming test encoder did not start";
@@ -107,6 +127,10 @@ void StreamingProbe::stop() {
   if (m_encoder) {
     obs_encoder_release(m_encoder);
     m_encoder = nullptr;
+  }
+  if (m_audioEncoder) {
+    obs_encoder_release(m_audioEncoder);
+    m_audioEncoder = nullptr;
   }
 }
 
