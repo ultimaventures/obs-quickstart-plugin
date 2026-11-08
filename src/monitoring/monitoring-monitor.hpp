@@ -119,11 +119,13 @@ public:
   void start();
   /**
    * Stops the in-flight attempt and finishes with Kind::Cancelled.
-   * During recording, the recording stops and cleanup still runs
-   * through the settle policy. During settling, the wait is cut short
-   * but deletion still requires the settle tracker's full quiet-poll
-   * evidence — otherwise the files are left and reported. No-op when
-   * idle.
+   * During recording, the recording stops and cleanup runs through
+   * the full settle policy (a recording-cancel is the normal path —
+   * the file is deleted once it is provably quiet). A SECOND cancel
+   * during settling is the impatient one: it cuts the wait short,
+   * and deletion then still requires the settle tracker's full
+   * quiet-poll evidence — otherwise the files are left and reported.
+   * No-op when idle.
    */
   void cancel();
 
@@ -162,6 +164,9 @@ private:
   QTimer *m_timer = nullptr;
   os_cpu_usage_info_t *m_cpuInfo = nullptr;
   bool m_cancelRequested = false;
+  /** A cancel that arrived DURING settling (fed to the tracker);
+   *  distinct from a recording-cancel, which settles normally. */
+  bool m_settleCancelRequested = false;
 
   TestOutcome m_outcome;
   std::string m_currentPreset;

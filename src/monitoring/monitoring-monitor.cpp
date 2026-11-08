@@ -292,7 +292,15 @@ void StabilityMonitor::takeBaseline() {
 }
 
 void StabilityMonitor::cancel() {
-  if (!running() || m_cancelRequested)
+  if (!running())
+    return;
+  if (m_state == State::Settling) {
+    // A cancel during settling is the impatient one: it ends the
+    // wait via the tracker, without weakening deletion evidence.
+    m_settleCancelRequested = true;
+    return;
+  }
+  if (m_cancelRequested)
     return;
   m_cancelRequested = true;
   if (m_state == State::Recording) {
@@ -302,8 +310,6 @@ void StabilityMonitor::cancel() {
     m_pendingDetail.clear();
     enterSettling();
   }
-  // In Settling, onTick feeds cancelRequested into the settle tracker,
-  // which ends the wait without weakening the deletion evidence.
 }
 
 void StabilityMonitor::enterSettling() {
@@ -311,6 +317,7 @@ void StabilityMonitor::enterSettling() {
     obs_frontend_recording_stop();
   m_state = State::Settling;
   m_settleTracker = SettleTracker{};
+  m_settleCancelRequested = false;
   m_lastTrackedFiles = trackedFiles();
 }
 
@@ -389,7 +396,7 @@ bool StabilityMonitor::pollSettling() {
   SettleObservation observation;
   observation.recordingActive = obs_frontend_recording_active();
   observation.filesChanged = changed;
-  observation.cancelRequested = m_cancelRequested;
+  observation.cancelRequested = m_settleCancelRequested;
   const SettleAction action = m_settleTracker.observe(observation);
   if (action == SettleAction::Wait)
     return false;
