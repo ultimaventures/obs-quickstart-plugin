@@ -205,3 +205,30 @@ assert(QThread::currentThread() == qApp->thread());
 **Use quotes for project headers, angle brackets for system/third-party.**
 
 ---
+
+## 12. Filesystem Paths and UTF-8 (Windows)
+
+OBS hands out strings (profile paths, recording output paths, user
+names inside paths) as UTF-8 on every platform. On Windows,
+`std::filesystem::path` constructed from a `std::string`, and
+`path::string()`, convert through the process ANSI code page instead —
+silently mangling any non-ASCII character (e.g. `C:\Users\José\...`)
+and pointing filesystem operations at the wrong path.
+
+* Build every path from an OBS- or user-derived string with
+  `std::filesystem::u8path(...)`, never the `path(std::string)`
+  constructor.
+* Convert a path back to a string with `path::u8string()` (returns
+  `std::string` under C++17), never `path::string()`.
+* Compose paths component-wise with `operator/` on `u8path` pieces.
+* This binds ALL modules, not just the one that handles profiles: any
+  code that stats, compares, creates, or deletes files using
+  OBS-supplied strings follows it. File DELETION code is where a
+  mangled path does the most damage — a wrong decode can select the
+  wrong file.
+
+The rule is guarded in code by a `static_assert` in
+`src/profile/profile-module.cpp` (it fails the build if a future
+C++ standard bump changes `u8string()`'s return type) and by
+non-ASCII path tests in `tests/profile_tests.cpp`, which only the
+Windows CI leg can actually catch violations on.
