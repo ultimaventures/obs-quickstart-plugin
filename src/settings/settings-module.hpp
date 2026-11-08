@@ -178,12 +178,15 @@ public:
    * SimpleOutput/VBitrate, SimpleOutput/StreamEncoder="x264" and the
    * x264 preset key — in ONE config_save_safe() with the same
    * capture-and-restore discipline as the other apply* methods, so the
-   * fallback lands whole or not at all. Simple mode only: an
-   * Advanced-mode profile is refused (its outputs are the user's own
-   * to manage). Profiles using custom FPSNum/FPSDen instead of
-   * FPSCommon are out of scope (wizard-produced profiles use
-   * FPSCommon). This is the stability test's last-resort OFFER — the
-   * caller must have the user's explicit confirmation before calling.
+   * fallback lands whole or not at all. Simple mode only: a profile
+   * whose Output/Mode is missing or not "Simple" is refused (missing
+   * is not treated as Simple — the same rule migrateToAdvancedMode
+   * uses). Profiles carrying user-set FPSNum/FPSDen values are
+   * detected and refused: custom frame timing is out of the
+   * fallback's scope, and scope the code cannot detect is scope it
+   * must not silently claim. This is the stability test's last-resort
+   * OFFER — the caller must have the user's explicit confirmation
+   * before calling.
    *
    * @return True only when every value was written and saved.
    */
