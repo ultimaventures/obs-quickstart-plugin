@@ -3,6 +3,7 @@
 #include "../profile/profile-module.hpp"
 #include "../settings/settings-module.hpp"
 
+#include <QDateTime>
 #include <QTimer>
 
 #include <media-io/video-io.h>
@@ -20,7 +21,7 @@ namespace monitoring {
 namespace fs = std::filesystem;
 namespace {
 
-uint32_t recordingSkippedFrames() {
+uint32_t frontendSkippedFrames() {
   obs_output_t *output = obs_frontend_get_recording_output();
   if (!output)
     return 0;
@@ -78,9 +79,7 @@ StabilityMonitor::StabilityMonitor(QObject *parent)
 
 StabilityMonitor::~StabilityMonitor() {
   m_timer->stop();
-  // Undo the in-memory quality switch even on destruction mid-test:
-  // the edit must not outlive the check in the running process.
-  restoreQuality();
+  m_probe.stop();
   if (m_state == State::Recording && obs_frontend_recording_active())
     obs_frontend_recording_stop();
   if (!m_testFilePath.empty() && m_state != State::Idle) {
@@ -113,51 +112,14 @@ std::string StabilityMonitor::remuxSiblingPath() const {
 
 std::map<std::string, uint64_t> StabilityMonitor::trackedFiles() const {
   std::map<std::string, uint64_t> files;
-  if (m_testFilePath.empty())
-    return files;
-  if (fileExists(m_testFilePath))
+  if (!m_testFilePath.empty() && fileExists(m_testFilePath))
     files[m_testFilePath] = fileSizeOrZero(m_testFilePath);
   const std::string sibling = remuxSiblingPath();
   if (!sibling.empty() && sibling != m_testFilePath && fileExists(sibling))
     files[sibling] = fileSizeOrZero(sibling);
+  if (!m_probeFilePath.empty() && fileExists(m_probeFilePath))
+    files[m_probeFilePath] = fileSizeOrZero(m_probeFilePath);
   return files;
-}
-
-void StabilityMonitor::switchQualityToStream() {
-  if (m_qualitySwitched)
-    return;
-  config_t *config = obs_frontend_get_profile_config();
-  if (!config)
-    return;
-  m_savedQualityHadUserValue =
-      config_has_user_value(config, "SimpleOutput", "RecQuality");
-  // IN MEMORY ONLY. No config_save* is called anywhere in this
-  // monitor: the value lives in the running process's profile config
-  // and is restored by restoreQuality() on every exit path. A crash
-  // loses the edit with the process; the profile on disk is never
-  // touched by the switch.
-  config_set_string(config, "SimpleOutput", "RecQuality", "Stream");
-  m_qualitySwitched = true;
-  blog(LOG_INFO,
-       "[Monitoring] Streaming pass: RecQuality set to "
-       "'Stream' in memory (profile value %s, not saved)",
-       m_recQualityKnown ? m_profileRecQuality.c_str() : "<unset>");
-}
-
-void StabilityMonitor::restoreQuality() {
-  if (!m_qualitySwitched)
-    return;
-  m_qualitySwitched = false;
-  config_t *config = obs_frontend_get_profile_config();
-  if (!config)
-    return;
-  if (m_savedQualityHadUserValue)
-    config_set_string(config, "SimpleOutput", "RecQuality",
-                      m_profileRecQuality.c_str());
-  else
-    config_remove_value(config, "SimpleOutput", "RecQuality");
-  blog(LOG_INFO, "[Monitoring] RecQuality restored in memory to %s",
-       m_recQualityKnown ? m_profileRecQuality.c_str() : "<unset>");
 }
 
 int StabilityMonitor::stepSecondsRemaining() const {
@@ -171,15 +133,13 @@ int StabilityMonitor::stepSecondsRemaining() const {
   return static_cast<int>(std::ceil(left));
 }
 
-void StabilityMonitor::start() {
+void StabilityMonitor::start(bool streamingOnly) {
   if (running())
     return;
   m_cancelRequested = false;
   m_settleCancelRequested = false;
   m_outcome = TestOutcome{};
   m_cleanupNotes.clear();
-  m_qualitySwitched = false;
-  m_streamingDone = false;
 
   profile::ProfileManager profiles;
   if (profiles.isBusy()) {
@@ -203,18 +163,66 @@ void StabilityMonitor::start() {
   m_outcome.advancedMode = m_advancedMode;
   m_forceReportOnly = m_advancedMode;
 
-  // The profile's recording quality: decides whether a separate
-  // recording pass is needed, and is NEVER assumed when absent — a
-  // profile with no RecQuality value gets an ungoverned recording
-  // pass measured as-is (the "unproven means conservative" rule the
-  // rest of this module follows).
-  m_recQualityKnown =
+  // The profile's recording quality: decides the check's shape, and
+  // is NEVER assumed when absent — a profile with no RecQuality
+  // value is measured as-is (the "unproven means conservative" rule
+  // the rest of this module follows).
+  const bool recQualityKnown =
       config_has_user_value(config, "SimpleOutput", "RecQuality");
   const char *recQuality =
       config_get_string(config, "SimpleOutput", "RecQuality");
   m_profileRecQuality =
-      m_recQualityKnown && recQuality && *recQuality ? recQuality : "";
+      recQualityKnown && recQuality && *recQuality ? recQuality : "";
   m_outcome.recQuality = m_profileRecQuality;
+
+  // Mode selection.
+  if (m_advancedMode) {
+    m_mode = Mode::AdvancedRecording;
+  } else if (streamingOnly) {
+    m_mode = Mode::StreamingOnly;
+  } else if (m_profileRecQuality == "Stream") {
+    // The frontend recording output IS the streaming encoder.
+    m_mode = Mode::SharedEncoder;
+    m_outcome.recordingSharesStreamingEncoder = true;
+  } else {
+    m_mode = Mode::Combined;
+    m_outcome.combinedMode = true;
+  }
+
+  // Preliminary identity + stepping cursor.
+  m_presetGoverned = false;
+  if (m_mode == Mode::AdvancedRecording) {
+    const char *recEncoder = config_get_string(config, "AdvOut", "RecEncoder");
+    m_currentPreset.clear();
+    m_outcome.encoderId = recEncoder ? recEncoder : "";
+    m_outcome.family = familyForEncoderId(m_outcome.encoderId);
+    m_outcome.originalPreset.clear();
+    m_outcome.presetGoverned = false;
+  } else {
+    const char *simpleEncoder =
+        config_get_string(config, "SimpleOutput", "StreamEncoder");
+    const std::string encoderId =
+        simpleEncoder ? settings::libobsEncoderIdForSimpleEncoder(simpleEncoder)
+                      : "";
+    const std::string key = settings::presetKeyForEncoder(encoderId);
+    const char *preset =
+        !key.empty() ? config_get_string(config, "SimpleOutput", key.c_str())
+                     : nullptr;
+    m_currentPreset =
+        preset && *preset ? preset : settings::defaultPresetFor(encoderId);
+    m_outcome.encoderId = encoderId;
+    m_outcome.family = familyForEncoderId(encoderId);
+    m_outcome.originalPreset = m_currentPreset;
+    // Governed: the probe is built from this very key (probe modes),
+    // or the key feeds the shared encoder directly (shared mode).
+    m_presetGoverned =
+        recordingPresetGovernedByConfig(m_outcome.family, "Stream");
+    m_outcome.presetGoverned = m_presetGoverned;
+  }
+  m_maxAttempts = m_presetGoverned
+                      ? attemptsAvailable(m_outcome.family, m_currentPreset)
+                      : 1;
+  m_attempt = 0;
 
   obs_video_info ovi{};
   if (obs_get_video_info(&ovi) && ovi.fps_den != 0) {
@@ -225,89 +233,6 @@ void StabilityMonitor::start() {
   }
 
   m_cpuInfo = os_cpu_usage_info_start();
-
-  if (m_advancedMode) {
-    // Single pass over the recording output as it is: the
-    // SimpleOutput keys (and the in-memory switch) are dormant in
-    // Advanced mode, and its cleanup evidence rules do not transfer.
-    m_hasRecordingPass = false;
-    m_passCount = 1;
-    startPass(PassKind::Recording);
-    return;
-  }
-  m_hasRecordingPass = m_profileRecQuality != "Stream";
-  m_passCount = m_hasRecordingPass ? 2 : 1;
-  m_outcome.recordingSharesStreamingEncoder = !m_hasRecordingPass;
-  startPass(PassKind::Streaming);
-}
-
-void StabilityMonitor::startPass(PassKind kind) {
-  m_pass = kind;
-  m_passIndex = (kind == PassKind::Recording && m_hasRecordingPass) ? 1 : 0;
-  m_presetGoverned = false;
-  m_measuredPreset.clear();
-
-  config_t *config = obs_frontend_get_profile_config();
-
-  if (kind == PassKind::Streaming) {
-    // The streaming pass runs the recording output AS the streaming
-    // encoder: RecQuality "Stream" is precisely the frontend mode
-    // where the file output reuses the streaming encoder instance.
-    switchQualityToStream();
-    const char *simpleEncoder =
-        config ? config_get_string(config, "SimpleOutput", "StreamEncoder")
-               : nullptr;
-    const std::string encoderId =
-        simpleEncoder ? settings::libobsEncoderIdForSimpleEncoder(simpleEncoder)
-                      : "";
-    const std::string key = settings::presetKeyForEncoder(encoderId);
-    const char *preset =
-        config && !key.empty()
-            ? config_get_string(config, "SimpleOutput", key.c_str())
-            : nullptr;
-    m_currentPreset =
-        preset && *preset ? preset : settings::defaultPresetFor(encoderId);
-    m_outcome.encoderId = encoderId;
-    m_outcome.family = familyForEncoderId(encoderId);
-    m_outcome.originalPreset = m_currentPreset;
-    // In force for this pass, the quality IS "Stream" (set above) —
-    // governed is decided against that fact, not against the
-    // profile's stored quality.
-    m_presetGoverned =
-        recordingPresetGovernedByConfig(m_outcome.family, "Stream");
-    m_outcome.presetGoverned = m_presetGoverned;
-  } else if (m_advancedMode) {
-    // Advanced profiles name the recording encoder by libobs id in
-    // AdvOut/RecEncoder. No cursor: nothing is stepped or restored.
-    const char *recEncoder =
-        config ? config_get_string(config, "AdvOut", "RecEncoder") : nullptr;
-    m_currentPreset.clear();
-    m_outcome.encoderId = recEncoder ? recEncoder : "";
-    m_outcome.family = familyForEncoderId(m_outcome.encoderId);
-    m_outcome.originalPreset.clear();
-    m_outcome.presetGoverned = false;
-  } else {
-    // Dual-pass recording pass: the profile's separate recording
-    // encoder, named by SimpleOutput/RecEncoder. Its settings are
-    // constructed by OBS's code, so there is no preset cursor and no
-    // stepping — one measured attempt.
-    restoreQuality(); // already restored at pass transition; idempotent
-    const char *recEncoder =
-        config ? config_get_string(config, "SimpleOutput", "RecEncoder")
-               : nullptr;
-    const std::string encoderId =
-        recEncoder ? settings::libobsEncoderIdForSimpleEncoder(recEncoder) : "";
-    m_outcome.recordingEncoderId = encoderId;
-  }
-
-  // Honest attempt budget: remaining ladder rungs from THIS preset —
-  // and exactly one attempt when stepping could not change the
-  // encoder being measured.
-  m_maxAttempts = m_presetGoverned
-                      ? attemptsAvailable(m_outcome.family, m_currentPreset)
-                      : 1;
-  m_attempt = 0;
-  emit passStarted(m_passIndex, m_passCount, kind == PassKind::Recording);
   beginAttempt();
 }
 
@@ -319,9 +244,13 @@ void StabilityMonitor::beginAttempt() {
   m_cpuSum = 0.0;
   m_cpuSamples = 0;
   m_cpuPeak = 0.0;
-  m_attemptMetrics = Metrics{};
+  m_streamingMetrics = Metrics{};
+  m_recordingMetrics = Metrics{};
+  m_haveRecordingMetrics = false;
   m_measuredPreset.clear();
   m_testFilePath.clear();
+  m_probeFilePath.clear();
+  m_probeStarted = false;
   m_fallbackMode = false;
   m_recordingExistedAtStart = false;
   m_siblingExistedAtStart = false;
@@ -329,8 +258,6 @@ void StabilityMonitor::beginAttempt() {
   m_lastTrackedFiles.clear();
   m_settleTracker = SettleTracker{};
   m_pending = Pending::Evaluate;
-  // Auto-remux state for this attempt (drives the settle sibling
-  // expectation once the recording's path is known).
   config_t *config = obs_frontend_get_profile_config();
   m_autoRemux = config && config_get_bool(config, "Video", "AutoRemux");
   // Ownership evidence for the recording file: which entry names
@@ -357,34 +284,90 @@ void StabilityMonitor::beginAttempt() {
   }
   m_attemptClock.restart();
 
-  const std::string &prelimId =
-      (m_pass == PassKind::Recording && m_hasRecordingPass)
-          ? m_outcome.recordingEncoderId
-          : m_outcome.encoderId;
   blog(LOG_INFO,
-       "[Monitoring] Stability attempt %d/%d (%s pass): encoder %s at "
-       "preset '%s'",
-       m_attempt, m_maxAttempts,
-       m_pass == PassKind::Streaming ? "streaming" : "recording",
-       prelimId.c_str(), m_currentPreset.c_str());
+       "[Monitoring] Stability attempt %d/%d (mode %d): streaming "
+       "encoder %s at preset '%s'",
+       m_attempt, m_maxAttempts, static_cast<int>(m_mode),
+       m_outcome.encoderId.c_str(), m_currentPreset.c_str());
   emit attemptStarted(m_attempt, m_maxAttempts);
-  obs_frontend_recording_start();
+
+  // Start the probe first: its start is synchronous, so a failure is
+  // known before the frontend recording begins, and the attempt can
+  // error without a stray recording to clean up beyond the probe's
+  // own file.
+  if (probeExpected()) {
+    std::string probeDir = dir;
+    if (probeDir.empty()) {
+      std::error_code ec;
+      probeDir = fs::temp_directory_path(ec).u8string();
+    }
+    const QString stamp =
+        QDateTime::currentDateTime().toString("yyyyMMdd-hhmmss");
+    m_probeFilePath = (fs::u8path(probeDir) /
+                       fs::u8path("quickstart-probe-" + stamp.toStdString() +
+                                  "-a" + std::to_string(m_attempt) + ".mkv"))
+                          .u8string();
+    std::string error;
+    if (!m_probe.start(config, m_currentPreset, m_probeFilePath, error)) {
+      blog(LOG_WARNING, "[Monitoring] Streaming probe failed: %s",
+           error.c_str());
+      m_pending = Pending::FinishInstead;
+      m_pendingKind = TestOutcome::Kind::Error;
+      m_pendingDetail = error;
+      m_state = State::Recording; // enterSettling expects a live attempt
+      m_timer->start();
+      enterSettling();
+      return;
+    }
+    m_probeStarted = true;
+  }
+  if (frontendExpected())
+    obs_frontend_recording_start();
   m_state = State::Recording;
   m_timer->start();
 }
 
 void StabilityMonitor::takeBaseline() {
-  // One shared baseline moment for all three verdict counters: the
-  // first poll where the recording output actually exists and is
-  // active. Baselining the skipped counter ~1s after the others (the
-  // old shape) silently excluded the startup second — plausibly the
-  // worst second for encoder skips — from exactly one numerator.
+  // One shared baseline moment for all verdict counters: the first
+  // poll where every expected output is actually active. Baselining
+  // a counter ~1s after the others silently excludes the startup
+  // second — plausibly the worst second for encoder skips — from
+  // exactly one numerator.
   m_baseTotalFrames = obs_get_total_frames();
   m_baseLaggedFrames = obs_get_lagged_frames();
-  m_baseSkippedFrames = recordingSkippedFrames();
+  m_baseSkippedFrames = frontendExpected() ? frontendSkippedFrames() : 0;
+  m_baseProbeSkippedFrames = probeExpected() ? m_probe.skippedFrames() : 0;
   m_baselineTaken = true;
   m_windowClock.restart();
 
+  if (probeExpected()) {
+    // The probe was created from the config, so its family cannot
+    // contradict the stepping assumptions — but its live preset can
+    // (an encoder may normalize what it was given). Verify it the
+    // same way the frontend path does.
+    m_measuredPreset = m_probe.livePreset();
+    if (m_presetGoverned && !m_measuredPreset.empty() &&
+        m_measuredPreset != m_currentPreset) {
+      blog(LOG_WARNING,
+           "[Monitoring] Probe encoder runs at preset '%s', not the "
+           "configured '%s'; disabling preset stepping",
+           m_measuredPreset.c_str(), m_currentPreset.c_str());
+      m_presetGoverned = false;
+      m_outcome.presetGoverned = false;
+      m_maxAttempts = m_attempt;
+    }
+    blog(LOG_INFO,
+         "[Monitoring] Measuring streaming encoder %s at preset '%s' "
+         "(probe, stepping %s)",
+         m_probe.encoderId().c_str(),
+         !m_measuredPreset.empty()
+             ? m_measuredPreset.c_str()
+             : (m_presetGoverned ? m_currentPreset.c_str() : "not reported"),
+         m_presetGoverned ? "available" : "not applicable");
+  }
+
+  if (!frontendExpected())
+    return;
   obs_output_t *output = obs_frontend_get_recording_output();
   if (output) {
     obs_data_t *settings = obs_output_get_settings(output);
@@ -394,12 +377,9 @@ void StabilityMonitor::takeBaseline() {
         m_testFilePath = path;
       obs_data_release(settings);
     }
-    // Finalize WHO is being measured from the live output: the
-    // recording encoder instance that is actually running. The
-    // config-derived identity from startPass() is only an estimate
-    // until this runs. The live preset readback is captured as the
-    // MEASURED preset only — it never overwrites the config preset
-    // cursor (stepping / restore), which is a different value.
+    // Finalize the frontend encoder's identity from the live output.
+    // In combined mode this is the RECORDING side; in shared and
+    // Advanced modes it is the headline measurement itself.
     obs_encoder_t *encoder = obs_output_get_video_encoder(output);
     if (encoder) {
       const char *liveId = obs_encoder_get_id(encoder);
@@ -411,46 +391,29 @@ void StabilityMonitor::takeBaseline() {
           livePreset = p;
         obs_data_release(encSettings);
       }
-      m_measuredPreset = livePreset;
       if (liveId && *liveId) {
-        const bool headline =
-            m_pass == PassKind::Streaming || !m_hasRecordingPass;
-        const EncoderFamily prelimFamily = m_outcome.family;
-        const std::string prelimId = m_outcome.encoderId;
-        const EncoderFamily liveFamily = familyForEncoderId(liveId);
-        if (headline) {
-          m_outcome.encoderId = liveId;
-          m_outcome.family = liveFamily;
-        } else {
+        if (m_mode == Mode::Combined) {
           m_outcome.recordingEncoderId = liveId;
-        }
-        if (m_presetGoverned &&
-            (liveFamily != prelimFamily ||
-             (!livePreset.empty() && livePreset != m_currentPreset))) {
-          // The live encoder contradicts the stepping assumptions
-          // (different family than configured, or running a preset
-          // other than the one the config key should have produced):
-          // stop stepping. The measurement itself stays valid — the
-          // verdict describes the encoder that actually ran.
-          blog(LOG_WARNING,
-               "[Monitoring] Live encoder %s at preset '%s' does not "
-               "match the configured stepping target %s at '%s'; "
-               "disabling preset stepping for this pass",
-               liveId, livePreset.c_str(), prelimId.c_str(),
-               m_currentPreset.c_str());
-          m_presetGoverned = false;
-          if (headline)
+          blog(LOG_INFO, "[Monitoring] Measuring recording encoder %s", liveId);
+        } else {
+          // Headline = the frontend encoder (shared / Advanced).
+          const EncoderFamily prelimFamily = m_outcome.family;
+          m_outcome.encoderId = liveId;
+          m_outcome.family = familyForEncoderId(liveId);
+          m_measuredPreset = livePreset;
+          if (m_presetGoverned &&
+              (m_outcome.family != prelimFamily ||
+               (!livePreset.empty() && livePreset != m_currentPreset))) {
+            blog(LOG_WARNING,
+                 "[Monitoring] Live encoder %s at preset '%s' does not "
+                 "match the configured stepping target at '%s'; "
+                 "disabling preset stepping",
+                 liveId, livePreset.c_str(), m_currentPreset.c_str());
+            m_presetGoverned = false;
             m_outcome.presetGoverned = false;
-          m_maxAttempts = m_attempt;
+            m_maxAttempts = m_attempt;
+          }
         }
-        blog(LOG_INFO,
-             "[Monitoring] Measuring %s encoder %s at preset '%s' "
-             "(stepping %s)",
-             m_pass == PassKind::Streaming ? "streaming" : "recording", liveId,
-             !livePreset.empty() ? livePreset.c_str()
-                                 : (m_presetGoverned ? m_currentPreset.c_str()
-                                                     : "not reported"),
-             m_presetGoverned ? "available" : "not applicable");
       }
     }
   }
@@ -484,14 +447,7 @@ void StabilityMonitor::takeBaseline() {
   // the remux sibling cannot have been produced by THIS recording yet
   // (remux runs after stop), so a sibling present now predates the
   // test and is the user's file. For the recording itself, the
-  // attempt-start directory snapshot decides: OBS computes the exact
-  // filename before starting (the output's "path" setting), names
-  // are timestamped by default but a user filename format can be
-  // constant, and what happens on a name collision depends on the
-  // profile's Output/OverwriteIfExists — so if a file with this name
-  // was already in the directory snapshot, it is treated as the
-  // user's. With no (valid) snapshot, existence is unprovable and
-  // the answer is likewise "pre-existing": report, never delete.
+  // attempt-start directory snapshot decides (see the header note).
   m_siblingExistedAtStart = fileExists(remuxSiblingPath());
   if (m_dirSnapshotTaken) {
     const std::string name = fs::u8path(m_testFilePath).filename().u8string();
@@ -534,6 +490,8 @@ void StabilityMonitor::cancel() {
 void StabilityMonitor::enterSettling() {
   if (obs_frontend_recording_active())
     obs_frontend_recording_stop();
+  if (m_probeStarted)
+    m_probe.stopOutput();
   m_state = State::Settling;
   m_settleTracker = SettleTracker{};
   m_settleCancelRequested = false;
@@ -544,23 +502,30 @@ void StabilityMonitor::onTick() {
   const double attemptElapsed = m_attemptClock.elapsed() / 1000.0;
 
   if (m_state == State::Recording) {
-    if (!m_baselineTaken && obs_frontend_recording_active())
+    const bool frontendActive =
+        !frontendExpected() || obs_frontend_recording_active();
+    const bool probeActive = !probeExpected() || m_probe.active();
+    if (!m_baselineTaken && frontendActive && probeActive)
       takeBaseline();
 
     if (m_baselineTaken && attemptElapsed >= 2.0 &&
-        !obs_frontend_recording_active()) {
+        (!frontendActive || !probeActive)) {
       // Started, then died on its own: an error — but the partial
-      // file still goes through the settle policy before finishing.
+      // files still go through the settle policy before finishing.
       m_pending = Pending::FinishInstead;
       m_pendingKind = TestOutcome::Kind::Error;
-      m_pendingDetail = "The test recording stopped early.";
+      m_pendingDetail = !frontendActive
+                            ? "The test recording stopped early."
+                            : "The streaming test encoder stopped early.";
       enterSettling();
       return;
     }
     if (!m_baselineTaken && attemptElapsed >= 5.0) {
       m_pending = Pending::FinishInstead;
       m_pendingKind = TestOutcome::Kind::Error;
-      m_pendingDetail = "The test recording did not start.";
+      m_pendingDetail = !frontendActive
+                            ? "The test recording did not start."
+                            : "The streaming test encoder did not start.";
       enterSettling();
       return;
     }
@@ -568,8 +533,8 @@ void StabilityMonitor::onTick() {
     const double fps = obs_get_active_fps();
     const double cpu = m_cpuInfo ? os_cpu_usage_info_query(m_cpuInfo) : 0.0;
     if (m_baselineTaken && m_windowClock.elapsed() >= 1000) {
-      // Skip the first window second (warm-up), as before — but now
-      // the verdict counters share that exclusion via the baseline.
+      // Skip the first window second (warm-up) — the verdict
+      // counters share that exclusion via the baseline.
       m_fpsSum += fps;
       ++m_fpsSamples;
       m_cpuSum += cpu;
@@ -589,7 +554,7 @@ void StabilityMonitor::onTick() {
       sampleFinalMetrics();
       m_pending = Pending::FinishInstead;
       m_pendingKind = TestOutcome::Kind::Error;
-      m_pendingDetail = "The test recording ran past its time budget.";
+      m_pendingDetail = "The test ran past its time budget.";
       enterSettling();
     }
     return;
@@ -604,18 +569,21 @@ void StabilityMonitor::onTick() {
 }
 
 bool StabilityMonitor::pollSettling() {
-  // Recording start is asynchronous: a cancel (or the did-not-start
-  // timeout) can enter settling before the output ever became
-  // active, and a stop issued then would have nothing to stop. Keep
-  // issuing the stop while finishing so a late-starting recording is
-  // stopped instead of being left running.
+  // Output starts are asynchronous: a cancel (or the did-not-start
+  // timeout) can enter settling before an output ever became active,
+  // and a stop issued then would have nothing to stop. Keep issuing
+  // the stops while finishing so a late-starting output is stopped
+  // instead of being left running.
   if (obs_frontend_recording_active())
     obs_frontend_recording_stop();
+  if (m_probeStarted)
+    m_probe.stopOutput();
   const auto now = trackedFiles();
   const bool changed = now != m_lastTrackedFiles;
   m_lastTrackedFiles = now;
   SettleObservation observation;
-  observation.recordingActive = obs_frontend_recording_active();
+  observation.recordingActive =
+      obs_frontend_recording_active() || (m_probeStarted && m_probe.active());
   observation.filesChanged = changed;
   observation.cancelRequested = m_settleCancelRequested;
   const std::string sibling = remuxSiblingPath();
@@ -630,27 +598,18 @@ bool StabilityMonitor::pollSettling() {
 }
 
 void StabilityMonitor::performCleanup(bool mayDelete) {
-  if (m_fallbackMode || m_testFilePath.empty()) {
-    m_cleanupNotes.push_back(
-        "The test recording could not be identified for cleanup, so "
-        "nothing was deleted automatically. Check your recording "
-        "folder for a short test recording from just now.");
-    return;
-  }
-  const CleanupPlan plan =
-      planCleanup(m_fallbackMode, !m_testFilePath.empty(),
-                  m_recordingExistedAtStart, m_siblingExistedAtStart);
-  const std::string sibling = remuxSiblingPath();
   bool deletedRecording = false;
   bool deletedSibling = false;
-  auto handle = [&](const std::string &path, bool planAllows, bool isPrimary) {
+  bool deletedProbe = false;
+  auto handle = [&](const std::string &path, bool planAllows, bool isPrimary,
+                    bool &deletedFlag) {
     if (path.empty())
       return;
     if (!fileExists(path)) {
       // Absence is not deletion: the file may never have been
       // created. Say exactly that — but only for the recording
       // itself, and only when cleanup would otherwise have deleted
-      // it (a missing remux sibling is unremarkable).
+      // it (a missing remux sibling or probe file is unremarkable).
       if (isPrimary && mayDelete && planAllows)
         m_cleanupNotes.push_back("The test recording was not found "
                                  "afterwards, so there was nothing "
@@ -672,27 +631,47 @@ void StabilityMonitor::performCleanup(bool mayDelete) {
     }
     std::error_code ec;
     if (fs::remove(fs::u8path(path), ec)) {
-      blog(LOG_INFO, "[Monitoring] Deleted test recording %s", path.c_str());
-      if (isPrimary)
-        deletedRecording = true;
-      else
-        deletedSibling = true;
+      blog(LOG_INFO, "[Monitoring] Deleted test file %s", path.c_str());
+      deletedFlag = true;
     } else {
-      m_cleanupNotes.push_back("Could not delete the test recording; "
+      m_cleanupNotes.push_back("Could not delete a test recording; "
                                "it is still at: " +
                                path);
     }
   };
-  handle(m_testFilePath, plan.deleteRecording, true);
-  if (!sibling.empty() && sibling != m_testFilePath)
-    handle(sibling, plan.deleteRemuxSibling, false);
-  // The deletion claim is made only for files that existed at
-  // cleanup time and were actually removed above.
-  if (deletedRecording) {
+
+  if (frontendExpected()) {
+    if (m_fallbackMode || m_testFilePath.empty()) {
+      m_cleanupNotes.push_back(
+          "The test recording could not be identified for cleanup, so "
+          "nothing was deleted automatically. Check your recording "
+          "folder for a short test recording from just now.");
+    } else {
+      const CleanupPlan plan =
+          planCleanup(m_fallbackMode, !m_testFilePath.empty(),
+                      m_recordingExistedAtStart, m_siblingExistedAtStart);
+      handle(m_testFilePath, plan.deleteRecording, true, deletedRecording);
+      const std::string sibling = remuxSiblingPath();
+      if (!sibling.empty() && sibling != m_testFilePath)
+        handle(sibling, plan.deleteRemuxSibling, false, deletedSibling);
+    }
+  }
+  // The probe file is test-created by construction (the plugin named
+  // and started it): the plan always allows its deletion; the settle
+  // decision (mayDelete) still applies in full.
+  if (!m_probeFilePath.empty())
+    handle(m_probeFilePath, true, false, deletedProbe);
+  // Deletion claims are made only for files that existed at cleanup
+  // time and were actually removed above.
+  if (deletedRecording && deletedProbe) {
+    m_cleanupNotes.push_back("Both test recordings were deleted.");
+  } else if (deletedRecording) {
     std::string note = "The test recording was deleted.";
     if (deletedSibling)
       note += " Its remuxed copy was deleted too.";
     m_cleanupNotes.push_back(note);
+  } else if (deletedProbe) {
+    m_cleanupNotes.push_back("The streaming test recording was deleted.");
   } else if (deletedSibling) {
     m_cleanupNotes.push_back("The remuxed copy of the test recording "
                              "was deleted.");
@@ -700,38 +679,42 @@ void StabilityMonitor::performCleanup(bool mayDelete) {
 }
 
 void StabilityMonitor::sampleFinalMetrics() {
-  Metrics &m = m_attemptMetrics;
   if (!m_baselineTaken) {
-    m = Metrics{};
+    m_streamingMetrics = Metrics{};
+    m_recordingMetrics = Metrics{};
+    m_haveRecordingMetrics = false;
     return;
   }
-  m.durationSeconds = m_windowClock.elapsed() / 1000.0;
-  m.totalFrames =
+  Metrics shared;
+  shared.durationSeconds = m_windowClock.elapsed() / 1000.0;
+  shared.totalFrames =
       static_cast<uint32_t>(obs_get_total_frames() - m_baseTotalFrames);
-  m.laggedFrames =
+  shared.laggedFrames =
       static_cast<uint32_t>(obs_get_lagged_frames() - m_baseLaggedFrames);
-  m.skippedFrames =
-      static_cast<uint32_t>(recordingSkippedFrames() - m_baseSkippedFrames);
-  m.averageFps = m_fpsSamples > 0 ? m_fpsSum / m_fpsSamples : 0.0;
-  m.targetFps = m_targetFps;
-  m.averageCpuPercent = m_cpuSamples > 0 ? m_cpuSum / m_cpuSamples : 0.0;
-  m.peakCpuPercent = m_cpuPeak;
+  shared.averageFps = m_fpsSamples > 0 ? m_fpsSum / m_fpsSamples : 0.0;
+  shared.targetFps = m_targetFps;
+  shared.averageCpuPercent = m_cpuSamples > 0 ? m_cpuSum / m_cpuSamples : 0.0;
+  shared.peakCpuPercent = m_cpuPeak;
+
+  const uint32_t frontendDelta =
+      static_cast<uint32_t>(frontendSkippedFrames() - m_baseSkippedFrames);
+  m_streamingMetrics = shared;
+  m_streamingMetrics.skippedFrames =
+      probeExpected() ? static_cast<uint32_t>(m_probe.skippedFrames() -
+                                              m_baseProbeSkippedFrames)
+                      : frontendDelta;
+  m_haveRecordingMetrics = m_mode == Mode::Combined;
+  if (m_haveRecordingMetrics) {
+    m_recordingMetrics = shared;
+    m_recordingMetrics.skippedFrames = frontendDelta;
+  }
 }
 
 void StabilityMonitor::completeAttempt() {
   m_timer->stop();
+  m_probe.stop(); // release this attempt's probe; metrics are sampled
 
   if (m_pending == Pending::FinishInstead) {
-    if (m_pass == PassKind::Recording && m_hasRecordingPass &&
-        m_streamingDone && m_pendingKind == TestOutcome::Kind::Error) {
-      // The recording pass failed mechanically AFTER the streaming
-      // pass produced a verdict: keep the headline, record the
-      // recording failure alongside it.
-      m_outcome.recordingKind = TestOutcome::Kind::Error;
-      m_outcome.recordingError = m_pendingDetail;
-      finish(m_outcome.kind);
-      return;
-    }
     finish(m_pendingKind, m_pendingDetail);
     return;
   }
@@ -744,45 +727,62 @@ void StabilityMonitor::completeAttempt() {
   record.attempt = m_attempt;
   // Reported preset = the measured one (live readback); fall back to
   // the config cursor only when governed, where the config key feeds
-  // the measured instance by construction. Otherwise empty: the
-  // encoder ran at a preset nobody reported.
+  // the measured encoder's settings by construction. Otherwise
+  // empty: the encoder ran at a preset nobody reported.
   record.preset = !m_measuredPreset.empty()
                       ? m_measuredPreset
                       : (m_presetGoverned ? m_currentPreset : std::string());
-  record.metrics = m_attemptMetrics;
-  record.stability = evaluateStability(m_attemptMetrics);
-  const bool dualRecording =
-      m_pass == PassKind::Recording && m_hasRecordingPass;
-  if (dualRecording)
-    m_outcome.recordingAttempt = record;
-  else
-    m_outcome.attempts.push_back(record);
+  record.metrics = m_streamingMetrics;
+  record.stability = evaluateStability(m_streamingMetrics);
+  m_outcome.attempts.push_back(record);
+
+  if (m_haveRecordingMetrics && m_attempt == 1) {
+    // The recording verdict comes from the FIRST attempt: the one
+    // window where the user's real streaming preset was in force.
+    AttemptRecord recRecord;
+    recRecord.attempt = 1;
+    recRecord.preset = ""; // code-built by OBS; nothing config-known
+    recRecord.metrics = m_recordingMetrics;
+    recRecord.stability = evaluateStability(m_recordingMetrics);
+    m_outcome.recordingAttempt = recRecord;
+    m_outcome.recordingMeasured = true;
+    m_outcome.recordingKind = recRecord.stability.tier == Tier::Stable
+                                  ? TestOutcome::Kind::Stable
+                                  : (recRecord.stability.tier == Tier::Marginal
+                                         ? TestOutcome::Kind::Marginal
+                                         : TestOutcome::Kind::Unstable);
+  }
 
   blog(LOG_INFO,
-       "[Monitoring] %s attempt %d: %llu frames, lagged %.2f%%, skipped "
-       "%.2f%%, fps %.1f/%.1f, cpu avg %.0f%% -> %s",
-       m_pass == PassKind::Streaming ? "Streaming" : "Recording", m_attempt,
-       static_cast<unsigned long long>(m_attemptMetrics.totalFrames),
+       "[Monitoring] Attempt %d: streaming %llu frames, lagged %.2f%%, "
+       "skipped %.2f%% -> %s",
+       m_attempt,
+       static_cast<unsigned long long>(m_streamingMetrics.totalFrames),
        record.stability.laggedPercent, record.stability.skippedPercent,
-       m_attemptMetrics.averageFps, m_attemptMetrics.targetFps,
-       m_attemptMetrics.averageCpuPercent,
        record.stability.tier == Tier::Stable
            ? "STABLE"
            : (record.stability.tier == Tier::Marginal ? "MARGINAL"
                                                       : "UNSTABLE"));
 
   if (record.stability.tier == Tier::Stable) {
-    passFinished(TestOutcome::Kind::Stable);
+    // Headline mapping for combined mode: the recording side's
+    // first-attempt verdict can still downgrade the headline.
+    if (m_mode == Mode::Combined && m_outcome.recordingMeasured &&
+        m_outcome.recordingKind != TestOutcome::Kind::Stable) {
+      m_outcome.failedSide = FailedSide::Recording;
+      finish(m_outcome.recordingKind);
+      return;
+    }
+    finish(TestOutcome::Kind::Stable);
     return;
   }
   if (record.stability.tier == Tier::Marginal) {
     // Marginal evidence does not justify keeping a stepped preset:
     // restore the original and let the user retest, rather than
-    // silently locking in a quality reduction on borderline data.
-    // Only the streaming pass can have stepped. A FAILED restore is
-    // part of the outcome — never a reassurance.
-    if (m_pass == PassKind::Streaming &&
-        m_currentPreset != m_outcome.originalPreset) {
+    // silently locking in a quality reduction on borderline data. A
+    // FAILED restore is part of the outcome — never a reassurance.
+    if (m_currentPreset != m_outcome.originalPreset &&
+        m_mode != Mode::AdvancedRecording) {
       settings::SettingsManager settingsManager;
       if (settingsManager.applyEncoderPreset(m_outcome.originalPreset)) {
         blog(LOG_INFO,
@@ -798,9 +798,10 @@ void StabilityMonitor::completeAttempt() {
         m_outcome.presetRestoreFailed = true;
       }
     }
-    passFinished(TestOutcome::Kind::Marginal);
+    finish(TestOutcome::Kind::Marginal);
     return;
   }
+  // Unstable.
   if (m_presetGoverned && m_attempt < m_maxAttempts) {
     // The governed check is the M4 guard: never step a config key
     // that does not control the encoder being measured.
@@ -821,32 +822,19 @@ void StabilityMonitor::completeAttempt() {
       return;
     }
   }
-  passFinished(TestOutcome::Kind::Unstable);
-}
-
-void StabilityMonitor::passFinished(TestOutcome::Kind verdict) {
-  if (m_pass == PassKind::Streaming && m_hasRecordingPass) {
-    // Headline verdict banked; the recording pass now measures the
-    // profile's real recording setup (quality switch undone first,
-    // inside startPass via restoreQuality()).
-    m_outcome.kind = verdict;
-    m_streamingDone = true;
-    startPass(PassKind::Recording);
-    return;
-  }
-  if (m_pass == PassKind::Recording && m_hasRecordingPass) {
-    m_outcome.recordingKind = verdict;
-    m_outcome.recordingMeasured = true;
-    finish(m_outcome.kind);
-    return;
-  }
-  finish(verdict);
+  m_outcome.failedSide =
+      m_mode == Mode::AdvancedRecording
+          ? FailedSide::Recording
+          : (m_mode == Mode::Combined && m_outcome.recordingMeasured &&
+                     m_outcome.recordingKind == TestOutcome::Kind::Unstable
+                 ? FailedSide::Both
+                 : FailedSide::Streaming);
+  finish(TestOutcome::Kind::Unstable);
 }
 
 void StabilityMonitor::finish(TestOutcome::Kind kind,
                               const std::string &detail) {
-  // The in-memory quality switch never outlives the check.
-  restoreQuality();
+  m_probe.stop();
   m_timer->stop();
   m_state = State::Idle;
   if (m_cpuInfo) {

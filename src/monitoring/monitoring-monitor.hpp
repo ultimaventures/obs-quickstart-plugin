@@ -2,6 +2,7 @@
 #define OBS_SETUP_MONITORING_MONITORING_MONITOR_HPP
 
 #include "monitoring-module.hpp"
+#include "monitoring-probe.hpp"
 
 #include <QElapsedTimer>
 #include <QObject>
@@ -20,44 +21,43 @@ namespace monitoring {
 
 /** One completed attempt of the stability test. */
 struct AttemptRecord {
-  int attempt = 0; ///< 1-based, within its pass.
+  int attempt = 0; ///< 1-based.
   /**
    * The preset this attempt measurably ran at, best evidence: the
    * live encoder readback when the encoder reports one; the config
-   * preset when the pass is governed (there the config key feeds the
-   * very instance being measured, so it IS the measured preset);
-   * empty when neither is available — the encoder ran at a preset
-   * nobody reported, and the UI must say so rather than guess.
+   * preset when stepping is governed (there the config key feeds
+   * the very settings the measured encoder was built with); empty
+   * when neither is available — the encoder ran at a preset nobody
+   * reported, and the UI must say so rather than guess.
    */
   std::string preset;
   Metrics metrics;
   Stability stability;
 };
 
+/** Which side of a combined check failed (dialog copy keys off it). */
+enum class FailedSide { None, Streaming, Recording, Both };
+
 /** Final result of a stability check, delivered via finished(). */
 struct TestOutcome {
   enum class Kind {
-    Stable,    ///< An attempt passed; finalPreset is the working preset.
-    Marginal,  ///< Best attempt landed in the marginal band; the original
-               ///< preset was restored — retest suggested, nothing kept.
-    Unstable,  ///< All attempts failed; offers (wizard / fallback) apply.
+    Stable,    ///< Everything measured passed.
+    Marginal,  ///< Best evidence landed in the marginal band; the
+               ///< original preset was restored when stepping ran.
+    Unstable,  ///< Something measured failed (see failedSide).
     Cancelled, ///< The user cancelled.
     Busy,      ///< Refused to start: outputs were already active.
     Error      ///< The test itself failed (see detail).
   };
-  /**
-   * Headline verdict: the STREAMING pass's verdict (in a single-pass
-   * check, that pass's verdict). The recording pass of a dual-pass
-   * check reports separately in recordingKind.
-   */
   Kind kind = Kind::Error;
   /** Busy output names or an error message, when kind needs one. */
   std::string detail;
+  FailedSide failedSide = FailedSide::None;
   /**
-   * The encoder the headline pass actually measured: the live
-   * recording output's encoder id, read from the running output (not
-   * inferred from configuration — under non-"Stream" recording
-   * qualities the recording encoder is a separate instance).
+   * The streaming encoder the check measured: in probe modes, the
+   * probe's encoder id; when recordings share the streaming encoder
+   * ("Stream" quality), the frontend recording output's live id; in
+   * Advanced mode, the recording encoder's id.
    */
   std::string encoderId;
   EncoderFamily family = EncoderFamily::Unknown;
@@ -65,23 +65,23 @@ struct TestOutcome {
    *  no user value for it). */
   std::string recQuality;
   /**
-   * Whether stepping the Simple-mode preset key would change the
-   * measured encoder in the headline pass (see
-   * recordingPresetGovernedByConfig). When false the headline pass
-   * ran exactly one attempt and the dialog must not imply retries
-   * happened.
+   * Whether stepping the streaming preset changes the measured
+   * streaming encode in this check (probe modes: the probe is built
+   * from the config key; shared mode: the key feeds the shared
+   * encoder). When false the check ran exactly one attempt at the
+   * streaming settings and the dialog must not imply retries.
    */
   bool presetGoverned = false;
-  /** Preset in effect before the check ("" = encoder default). */
+  /** Streaming preset in effect before the check ("" = default). */
   std::string originalPreset;
   /**
-   * Preset in effect when the check ended. On Stable this is the
-   * preset that passed (kept deliberately — it is the fix, and the
-   * results dialog says so). On Unstable it is the fastest step
-   * tried, still in effect — the dialog discloses the change from
-   * originalPreset and offers to restore it. On Marginal the stepped
-   * preset was NOT kept: finalPreset == originalPreset again —
-   * unless presetRestoreFailed says otherwise.
+   * Streaming preset in effect when the check ended. On Stable this
+   * is the preset that passed (kept deliberately — it is the fix,
+   * and the results dialog says so). On Unstable it is the fastest
+   * step tried, still in effect — the dialog discloses the change
+   * from originalPreset and offers to restore it. On Marginal the
+   * stepped preset was NOT kept: finalPreset == originalPreset
+   * again — unless presetRestoreFailed says otherwise.
    */
   std::string finalPreset;
   /**
@@ -91,23 +91,24 @@ struct TestOutcome {
    * the user that nothing changed.
    */
   bool presetRestoreFailed = false;
+  /** Streaming-side attempt records (in Advanced mode: the
+   *  recording-side records — that mode measures recording only). */
   std::vector<AttemptRecord> attempts;
   /** True when the profile uses OBS's Advanced output mode: the
-   *  check measured the recording output only, in a single pass,
-   *  with no stepping and report-only cleanup. */
+   *  check measured the recording output only, with no probe, no
+   *  stepping, and report-only cleanup. */
   bool advancedMode = false;
-  /** Single-pass check where recordings reuse the streaming encoder
-   *  (RecQuality "Stream"): the one verdict covers both. */
+  /** The check ran streaming + recording at the same time. */
+  bool combinedMode = false;
+  /** Recordings reuse the streaming encoder (RecQuality "Stream"),
+   *  so the frontend recording measured both sides at once and no
+   *  separate recording verdict exists. */
   bool recordingSharesStreamingEncoder = false;
-  /** A separate recording-encoder pass ran after the streaming pass. */
-  bool hasRecordingPass = false;
-  /** The recording pass produced a measured verdict. */
+  /** The recording side produced a measured verdict (combined). */
   bool recordingMeasured = false;
   Kind recordingKind = Kind::Error;
   AttemptRecord recordingAttempt;
   std::string recordingEncoderId;
-  /** The recording pass itself failed (recordingKind == Error). */
-  std::string recordingError;
   /**
    * The delivered-frames evidence gate could not run because OBS
    * reported no target frame rate: verdicts rest on the
@@ -124,62 +125,52 @@ struct TestOutcome {
 };
 
 /**
- * @brief Runs the stability test asynchronously — two passes.
+ * @brief Runs the stability test asynchronously.
  *
  * Main-thread QObject implementing architecture §7's required pattern:
- * recording starts/stops on the main thread, a 1-second QTimer polls
+ * outputs start/stop on the main thread, a 1-second QTimer polls
  * metrics, and results arrive through signals — OBS never blocks. All
  * durations are wall-clock (QElapsedTimer), not tick counts: under
  * exactly the overload this test detects, GUI timers slip, and a
  * "30-second" test must mean 30 real seconds.
  *
- * The check measures BOTH encoders a streaming setup actually uses,
- * back to back:
- * - Streaming pass: the recording output temporarily runs the
- *   streaming encoder itself. That is exactly what RecQuality
- *   "Stream" means in OBS's SimpleOutput, so the pass sets
- *   SimpleOutput/RecQuality to "Stream" IN MEMORY ONLY — never
- *   saved (no config_save on any path) — and restores the profile's
- *   exact prior state (value, or absence of a value) when the pass
- *   ends, on every exit path including cancel, error and this
- *   object's destruction. A crash cannot persist the edit; it lives
- *   only in the running process's memory and dies with it. Preset
- *   stepping (the only retries) happens in this pass, where the
- *   preset key provably governs the measured encoder.
- * - Recording pass (skipped when the profile already records at
- *   "Stream" quality, or in Advanced mode): one measured attempt at
- *   the profile's real recording quality, against the separate
- *   recording encoder OBS builds for it. Never stepped — that
- *   encoder's settings are constructed by OBS's code, not by any
- *   profile preset key.
+ * What runs depends on the profile and the user's pre-test choice:
+ * - Combined (default, Simple mode, recording quality not "Stream"):
+ *   OBS's own recording output (the profile's real recording
+ *   encoder) AND a StreamingProbe — the plugin's own encoder built
+ *   with the profile's streaming settings — record SIMULTANEOUSLY
+ *   for 30 seconds, the load a stream-and-record session actually
+ *   imposes. The streaming verdict comes from the probe, the
+ *   recording verdict from the frontend output, both over the same
+ *   window. Retries step only the streaming preset (the probe is
+ *   rebuilt with it); the recording verdict is read from the first
+ *   attempt, where the user's real streaming preset was in force.
+ * - Streaming-only (user's pre-test choice): the probe alone.
+ * - "Stream" recording quality: the frontend recording output IS
+ *   the streaming encoder — it is measured directly (governed, as
+ *   before), and its one verdict covers recording too.
+ * - Advanced mode: the frontend recording output alone, ungoverned,
+ *   report-only cleanup; the Simple-mode probe construction does not
+ *   apply there.
  *
- * Advanced output mode collapses the check to a single
- * recording-output measurement: no in-memory switch (the
- * SimpleOutput keys are dormant there), no stepping, and report-only
- * cleanup (the Simple-mode path evidence does not apply).
- *
- * Measurement window: all three frame counters (rendered, lagged,
- * encoder-skipped) are baselined at the same moment — the first poll
- * where the recording is actually active — and read again when the
- * recording stops, so the verdict's numerators and denominator always
- * describe the same window. Two preset values are kept apart on
- * purpose: the CONFIG preset is the stepping cursor and the restore
- * target; the LIVE readback from the running encoder is what gets
- * reported as measured.
+ * Two preset values are kept apart on purpose: the CONFIG preset is
+ * the stepping cursor and the restore target; the LIVE readback from
+ * the running encoder is what gets reported as measured.
  *
  * Cancel semantics: a cancel in ANY state finishes the check as
  * Cancelled after cleanup — it never evaluates a verdict and never
- * starts another attempt or pass. (Cleanup evidence rules are
- * separate and unchanged: a cancel during settling still needs the
- * settle tracker's full quiet evidence before anything is deleted.)
+ * starts another attempt. (Cleanup evidence rules are separate and
+ * unchanged: a cancel during settling still needs the settle
+ * tracker's full quiet evidence before anything is deleted.)
  *
  * Cleanup follows planCleanup() + SettleTracker (both pure, both
- * unit-tested): only files proven test-created are deleted, only
- * after the recording is inactive and file sizes stayed quiet for
- * the required polls, and never on a settle timeout — leftover files
- * are reported by path instead. Deletion results are propagated into
- * TestOutcome::cleanupNote; the monitor never claims a deletion it
- * did not observe succeed.
+ * unit-tested): only files proven test-created are deleted (the
+ * probe's file is test-created by construction — the plugin named
+ * it), only after every output is inactive and file sizes stayed
+ * quiet for the required polls, and never on a settle timeout —
+ * leftover files are reported by path instead. Deletion results are
+ * propagated into TestOutcome::cleanupNote; the monitor never claims
+ * a deletion it did not observe succeed.
  */
 class StabilityMonitor : public QObject {
   Q_OBJECT
@@ -189,10 +180,10 @@ public:
 
   bool running() const { return m_state != State::Idle; }
   bool settling() const { return m_state == State::Settling; }
-  /** 0-based index of the pass currently running. */
-  int currentPassIndex() const { return m_passIndex; }
-  int passCount() const { return m_passCount; }
-  bool onRecordingPass() const { return m_pass == PassKind::Recording; }
+  bool combinedMode() const { return m_mode == Mode::Combined; }
+  bool streamingOnlyMode() const { return m_mode == Mode::StreamingOnly; }
+  bool advancedMode() const { return m_mode == Mode::AdvancedRecording; }
+  bool sharedEncoderMode() const { return m_mode == Mode::SharedEncoder; }
   /**
    * Whole seconds left in the current step's measurement window, or
    * -1 when not in a measurement window (settling / idle): the
@@ -202,16 +193,18 @@ public:
   int stepSecondsRemaining() const;
 
   /** Starts a check. No-op when one is already running. A busy OBS
-   *  produces an immediate finished() with Kind::Busy. */
-  void start();
+   *  produces an immediate finished() with Kind::Busy.
+   *  @param streamingOnly Measure only the streaming encode (the
+   *  user's pre-test choice); ignored in Advanced mode. */
+  void start(bool streamingOnly = false);
   /**
    * Finishes the check with Kind::Cancelled once the in-flight
-   * attempt's cleanup completes. During recording, the recording
-   * stops and cleanup runs through the full settle policy; during
+   * attempt's cleanup completes. During recording, the outputs stop
+   * and cleanup runs through the full settle policy; during
    * settling, the wait is cut short but deletion still requires the
    * settle tracker's full quiet-poll evidence — otherwise the files
    * are left and reported. Either way the verdict is Cancelled: no
-   * new attempt, no new pass. No-op when idle.
+   * new attempt. No-op when idle.
    */
   void cancel();
 
@@ -219,24 +212,23 @@ signals:
   /** Once per second during an attempt. */
   void progress(int secondsElapsed, double fps, double cpuPercent);
   void attemptStarted(int attempt, int maxAttempts);
-  /** A pass began (before its first attemptStarted). */
-  void passStarted(int passIndex, int passCount, bool recordingPass);
   void finished(const obs_setup::monitoring::TestOutcome &outcome);
 
 private:
   enum class State { Idle, Recording, Settling };
-  enum class PassKind { Streaming, Recording };
+  enum class Mode {
+    Combined,         ///< Frontend recording + probe, simultaneously.
+    StreamingOnly,    ///< Probe alone.
+    SharedEncoder,    ///< "Stream" quality: frontend recording is the
+                      ///< streaming encode.
+    AdvancedRecording ///< Advanced mode: frontend recording alone.
+  };
 
-  /** Sets up a pass (identity, governed, attempt budget, quality
-   *  switch for the streaming pass) and begins its first attempt. */
-  void startPass(PassKind kind);
-  /** The current pass reached a final verdict: advance to the
-   *  recording pass when one remains, else finish the check. */
-  void passFinished(TestOutcome::Kind verdict);
   void beginAttempt();
   void onTick();
-  /** Takes the shared baseline for all frame counters (first active
-   *  poll) and pins the test file's identity. */
+  /** Takes the shared baseline for all frame counters (first poll
+   *  where every expected output is active) and pins the test
+   *  files' identities. */
   void takeBaseline();
   void sampleFinalMetrics();
   /** Runs the settle policy for one poll; returns true when settling
@@ -247,9 +239,9 @@ private:
    *  deletes nothing (settle timeout / unproven cancel / Advanced
    *  mode's report-only cleanup). */
   void performCleanup(bool mayDelete);
-  /** Stops the recording and enters Settling with a pending verdict
-   *  path: evaluate the attempt (normal), or finish directly with the
-   *  given kind/detail (cancel / error). */
+  /** Stops every running output and enters Settling with a pending
+   *  verdict path: evaluate the attempt (normal), or finish directly
+   *  with the given kind/detail (cancel / error). */
   void enterSettling();
   void finish(TestOutcome::Kind kind, const std::string &detail = "");
   /** The exact cleanup candidates for this attempt, path -> size. */
@@ -257,14 +249,13 @@ private:
   std::string remuxSiblingPath() const;
   /** SimpleOutput/FilePath, or "" when the profile has none saved. */
   std::string recordingDirectory() const;
-  /** Sets SimpleOutput/RecQuality to "Stream" in memory only (never
-   *  saved); remembers the exact prior state for restoreQuality(). */
-  void switchQualityToStream();
-  /** Undoes switchQualityToStream() exactly (value or absence).
-   *  Idempotent; called on pass transition, finish, and destruction. */
-  void restoreQuality();
+  bool frontendExpected() const { return m_mode != Mode::StreamingOnly; }
+  bool probeExpected() const {
+    return m_mode == Mode::Combined || m_mode == Mode::StreamingOnly;
+  }
 
   State m_state = State::Idle;
+  Mode m_mode = Mode::Combined;
   QTimer *m_timer = nullptr;
   os_cpu_usage_info_t *m_cpuInfo = nullptr;
   bool m_cancelRequested = false;
@@ -277,26 +268,25 @@ private:
   bool m_advancedMode = false;
   /** The profile's RecQuality user value ("" when none is set). */
   std::string m_profileRecQuality;
-  bool m_recQualityKnown = false;
-  PassKind m_pass = PassKind::Streaming;
-  int m_passIndex = 0;
-  int m_passCount = 1;
-  bool m_hasRecordingPass = false;
-  bool m_streamingDone = false;
-
-  // In-memory RecQuality switch state (streaming pass).
-  bool m_qualitySwitched = false;
-  bool m_savedQualityHadUserValue = false;
+  bool m_forceReportOnly = false;
 
   TestOutcome m_outcome;
-  /** The CONFIG preset: stepping cursor and restore target. Never
-   *  overwritten by live readback — the two are different things. */
+  /** The CONFIG streaming preset: stepping cursor and restore
+   *  target. Never overwritten by live readback. */
   std::string m_currentPreset;
-  /** The running encoder's own preset readback for this attempt
-   *  ("" when the encoder reports none). Display/reporting only. */
+  /** The running streaming encoder's own preset readback for this
+   *  attempt ("" when the encoder reports none). Reporting only. */
   std::string m_measuredPreset;
+  bool m_presetGoverned = false;
   int m_attempt = 0;
   int m_maxAttempts = 1;
+
+  StreamingProbe m_probe;
+  /** Full path of this attempt's probe recording ("" when the probe
+   *  is not part of the check). Plugin-named, in the recording
+   *  directory when one is known. */
+  std::string m_probeFilePath;
+  bool m_probeStarted = false;
 
   // Per-attempt timing (wall-clock; see class comment).
   QElapsedTimer m_attemptClock;
@@ -305,29 +295,23 @@ private:
   uint32_t m_baseTotalFrames = 0;
   uint32_t m_baseLaggedFrames = 0;
   uint32_t m_baseSkippedFrames = 0;
+  uint32_t m_baseProbeSkippedFrames = 0;
   double m_fpsSum = 0.0;
   int m_fpsSamples = 0;
   double m_cpuSum = 0.0;
   int m_cpuSamples = 0;
   double m_cpuPeak = 0.0;
   double m_targetFps = 0.0;
-  Metrics m_attemptMetrics;
+  Metrics m_streamingMetrics;
+  Metrics m_recordingMetrics;
+  bool m_haveRecordingMetrics = false;
 
-  // Per-pass identity. The preliminary values come from config at
-  // pass start; takeBaseline() replaces them with the live recording
-  // encoder's identity for reporting, and revokes m_presetGoverned
-  // if the live encoder contradicts the stepping assumptions.
-  bool m_presetGoverned = false;
-
-  // Per-attempt file tracking.
+  // Per-attempt file tracking (frontend recording).
   /** Exact path of the test recording, from the output's settings. */
   std::string m_testFilePath;
   /** True when the recording path could not be read from the output:
    *  file identity is unproven, so cleanup deletes nothing. */
   bool m_fallbackMode = false;
-  /** Advanced mode: cleanup reports, never deletes (primary review:
-   *  non-Simple mode means report-only cleanup). */
-  bool m_forceReportOnly = false;
   bool m_recordingExistedAtStart = false;
   bool m_siblingExistedAtStart = false;
   /** Auto-remux was on for this attempt and the sibling is a
