@@ -17,11 +17,13 @@ namespace monitoring {
 /** Seconds of recording per attempt. */
 inline constexpr int TEST_DURATION_SECONDS = 30;
 /**
- * Per-attempt watchdog, in seconds (architecture §7: the test dialog
- * has Cancel and a 45-second timeout). Covers recording start, the
- * 30-second record, stop, and file settling; an attempt that has not
- * produced a verdict within this budget is aborted as an error rather
- * than wedging the dialog.
+ * Per-attempt watchdog for the RECORDING phase, in seconds
+ * (architecture §7: the test dialog has Cancel and a 45-second
+ * timeout). Covers recording start and the 30-second window with
+ * margin; an attempt whose recording phase exceeds it is aborted as
+ * an error rather than wedging the dialog. File settling after the
+ * recording stops has its own budget — SETTLE_MAX_POLLS, enforced by
+ * SettleTracker — and is not bounded by this watchdog.
  */
 inline constexpr int ATTEMPT_TIMEOUT_SECONDS = 45;
 /** Total attempts for encoders with a quality ladder (first run + 2
@@ -197,6 +199,17 @@ struct SettleObservation {
   bool filesChanged = false;
   /** The user asked to cancel during settling. */
   bool cancelRequested = false;
+  /**
+   * Auto-remux is on for this recording, so a remux sibling (.mp4)
+   * is expected to appear. While expected-but-absent, polls do not
+   * count as quiet: no OBS API reports remux completion, and the
+   * sibling's appearance is the only observable trace. Bounded like
+   * everything else by SETTLE_MAX_POLLS — a remux that never
+   * produces the file ends in LeaveFiles, never in an endless wait.
+   */
+  bool siblingExpected = false;
+  /** The remux sibling exists at this poll. */
+  bool siblingPresent = false;
 };
 
 /** What the settle tracker decides at a poll. */
@@ -217,12 +230,16 @@ enum class SettleAction {
  * @brief Pure settle policy for post-recording cleanup.
  *
  * Deletion is permitted only after SETTLE_REQUIRED_QUIET_POLLS
- * consecutive polls with the recording inactive and no file changes.
- * The tracker NEVER returns DeleteNow while the recording is active or
- * files are changing — including on budget expiry and on cancel (a
- * cancel short-circuits the wait, but DeleteNow still requires the
- * full quiet-poll evidence; anything less is LeaveFiles). Once a
- * terminal action (DeleteNow / LeaveFiles) is returned it is sticky.
+ * consecutive quiet polls. A poll is quiet when the recording is
+ * inactive, no tracked file changed, and — when auto-remux is on
+ * and a remux sibling is therefore expected — the sibling has
+ * appeared. The budget is checked BEFORE the quiet evidence: a poll
+ * that arrives after SETTLE_MAX_POLLS ends the wait as LeaveFiles
+ * even if it is quiet. A cancel short-circuits the wait but never
+ * weakens the evidence: with the full quiet polls already counted
+ * it still deletes, otherwise it leaves the files. The tracker
+ * NEVER returns DeleteNow on an unquiet poll. Once a terminal
+ * action (DeleteNow / LeaveFiles) is returned it is sticky.
  */
 class SettleTracker {
 public:

@@ -272,6 +272,43 @@ TEST(SettleTracker, CancelAfterQuietEvidenceDeletes) {
   EXPECT_EQ(t.observe(o), SettleAction::DeleteNow);
 }
 
+TEST(SettleTracker, SiblingExpectedBlocksQuietUntilItAppears) {
+  SettleTracker t;
+  SettleObservation o;
+  o.siblingExpected = true;
+  o.siblingPresent = false;
+  // Inactive and unchanged, but the remux product has not appeared:
+  // these polls must not count as quiet.
+  EXPECT_EQ(t.observe(o), SettleAction::Wait);
+  EXPECT_EQ(t.observe(o), SettleAction::Wait);
+  EXPECT_EQ(t.observe(o), SettleAction::Wait);
+  o.siblingPresent = true;
+  EXPECT_EQ(t.observe(o), SettleAction::Wait);
+  EXPECT_EQ(t.observe(o), SettleAction::DeleteNow);
+}
+
+TEST(SettleTracker, SiblingThatNeverAppearsEndsInLeaveFiles) {
+  SettleTracker t;
+  SettleObservation o;
+  o.siblingExpected = true;
+  o.siblingPresent = false;
+  SettleAction last = SettleAction::Wait;
+  for (int i = 0; i < SETTLE_MAX_POLLS + 2; ++i)
+    last = t.observe(o);
+  EXPECT_EQ(last, SettleAction::LeaveFiles);
+}
+
+TEST(SettleTracker, BudgetWinsOverLateQuiet) {
+  SettleTracker t;
+  for (int i = 0; i < SETTLE_MAX_POLLS - 1; ++i)
+    EXPECT_EQ(t.observe(changingObs()), SettleAction::Wait);
+  // Poll SETTLE_MAX_POLLS: first quiet poll — still waiting.
+  EXPECT_EQ(t.observe(quietObs()), SettleAction::Wait);
+  // Poll SETTLE_MAX_POLLS + 1 would complete the quiet evidence, but
+  // the budget has already run out: LeaveFiles, not DeleteNow.
+  EXPECT_EQ(t.observe(quietObs()), SettleAction::LeaveFiles);
+}
+
 // ---- planCleanup ----
 
 TEST(PlanCleanup, NormalCaseDeletesBothFiles) {

@@ -147,20 +147,21 @@ SettleAction SettleTracker::observe(const SettleObservation &observation) {
   if (m_done)
     return m_final;
   ++m_polls;
-  const bool quiet = !observation.recordingActive && !observation.filesChanged;
+  const bool quiet =
+      !observation.recordingActive && !observation.filesChanged &&
+      (!observation.siblingExpected || observation.siblingPresent);
   if (quiet)
     ++m_quietPolls;
   else
     m_quietPolls = 0;
 
-  if (observation.cancelRequested) {
-    // A cancel ends the wait immediately, but deletion still requires
-    // the full quiet-poll evidence — a single quiet second is exactly
-    // the gap a remux can hide in. Anything less leaves the files.
+  if (m_polls > SETTLE_MAX_POLLS) {
+    // Budget exhausted: leave the files and say where they are. The
+    // budget is checked before the quiet evidence on purpose — a
+    // settle timeout must never become a delete-anyway, not even on
+    // a poll that happens to be quiet.
     m_done = true;
-    m_final = m_quietPolls >= SETTLE_REQUIRED_QUIET_POLLS
-                  ? SettleAction::DeleteNow
-                  : SettleAction::LeaveFiles;
+    m_final = SettleAction::LeaveFiles;
     return m_final;
   }
   if (m_quietPolls >= SETTLE_REQUIRED_QUIET_POLLS) {
@@ -168,9 +169,10 @@ SettleAction SettleTracker::observe(const SettleObservation &observation) {
     m_final = SettleAction::DeleteNow;
     return m_final;
   }
-  if (m_polls > SETTLE_MAX_POLLS) {
-    // Budget exhausted: leave the files and say where they are. A
-    // settle timeout must never become a delete-anyway.
+  if (observation.cancelRequested) {
+    // A cancel ends the wait here, with less than the full quiet
+    // evidence (the case above already handled a cancel arriving
+    // with the evidence complete): leave the files.
     m_done = true;
     m_final = SettleAction::LeaveFiles;
     return m_final;
