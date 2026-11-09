@@ -651,13 +651,22 @@ TEST_F(SettingsTest, MigrateSkipsMissingBitrate) {
 TEST_F(SettingsTest, FallbackAppliesToSimpleFpsCommonProfile) {
   g_fakeConfig.strings[{"Video", "FPSCommon"}] = "60";
   g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "nvenc";
+  g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}] = "HQ";
+  g_fakeConfig.uints[{"Video", "BaseCX"}] = 1920;
+  g_fakeConfig.uints[{"Video", "BaseCY"}] = 1080;
   settings::SettingsManager mgr;
   EXPECT_TRUE(mgr.applyConservativeFallback());
+  // Canvas AND output: rendering at 1080p is the dominant strain the
+  // fallback exists to remove (D2 ruling, 2026-11-08).
+  EXPECT_EQ((g_fakeConfig.uints[{"Video", "BaseCX"}]), 1280u);
+  EXPECT_EQ((g_fakeConfig.uints[{"Video", "BaseCY"}]), 720u);
   EXPECT_EQ((g_fakeConfig.uints[{"Video", "OutputCX"}]), 1280u);
   EXPECT_EQ((g_fakeConfig.uints[{"Video", "OutputCY"}]), 720u);
   EXPECT_EQ((g_fakeConfig.strings[{"Video", "FPSCommon"}]), "30");
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}]), "x264");
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "Preset"}]), "ultrafast");
+  // One encode instead of two.
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]), "Stream");
   EXPECT_TRUE(g_fakeConfig.saveCalled);
 }
 
@@ -711,6 +720,11 @@ TEST_F(SettingsTest, FallbackRestoresEverythingOnSaveFailure) {
   g_fakeConfig.uints[{"Video", "OutputCY"}] = 1080;
   g_fakeConfig.strings[{"Video", "FPSCommon"}] = "60";
   g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}] = "nvenc";
+  // The D2 keys restore by the same discipline — and a key with no
+  // prior value (BaseCY here) must be REMOVED, not left at the
+  // fallback's value.
+  g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}] = "HQ";
+  g_fakeConfig.uints[{"Video", "BaseCX"}] = 1920;
   g_fakeConfig.saveFails = true;
   settings::SettingsManager mgr;
   EXPECT_FALSE(mgr.applyConservativeFallback());
@@ -718,6 +732,9 @@ TEST_F(SettingsTest, FallbackRestoresEverythingOnSaveFailure) {
   EXPECT_EQ((g_fakeConfig.uints[{"Video", "OutputCY"}]), 1080u);
   EXPECT_EQ((g_fakeConfig.strings[{"Video", "FPSCommon"}]), "60");
   EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "StreamEncoder"}]), "nvenc");
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]), "HQ");
+  EXPECT_EQ((g_fakeConfig.uints[{"Video", "BaseCX"}]), 1920u);
+  EXPECT_EQ(g_fakeConfig.uints.count({"Video", "BaseCY"}), 0u);
 }
 
 // ---- applyEncoderPreset mode verification ----

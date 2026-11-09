@@ -171,12 +171,22 @@ public:
   bool applyRecordingSettings();
 
   /**
-   * @brief Applies the conservative fallback: 720p30 output, 2500 kbps,
-   * x264 at ultrafast.
+   * @brief Applies the conservative fallback — the stability ladder's
+   * last rung: a 720p canvas AND output at 30 fps, recording quality
+   * "Same as stream", 2500 kbps, x264 at ultrafast.
    *
-   * Writes Video/OutputCX, Video/OutputCY, Video/FPSCommon,
-   * SimpleOutput/VBitrate, SimpleOutput/StreamEncoder="x264" and the
-   * x264 preset key — in ONE config_save_safe() with the same
+   * The bundle spends the two biggest savings a struggling machine
+   * has (user ruling, 2026-11-08): RecQuality="Stream" collapses the
+   * two encodes into one, and BaseCX/BaseCY at 1280x720 removes the
+   * 1080p scene-rendering cost entirely (~2.25x the pixels — the
+   * dominant strain on weak integrated GPUs; merely scaling the
+   * output down would leave it in place, which is also why OBS's own
+   * wizard lowers the canvas, not just the output).
+   *
+   * Writes Video/BaseCX, Video/BaseCY, Video/OutputCX, Video/OutputCY,
+   * Video/FPSCommon, SimpleOutput/VBitrate,
+   * SimpleOutput/StreamEncoder="x264", SimpleOutput/RecQuality="Stream"
+   * and the x264 preset key — in ONE config_save_safe() with the same
    * capture-and-restore discipline as the other apply* methods, so the
    * fallback lands whole or not at all. Simple mode only: a profile
    * whose Output/Mode is missing or not "Simple" is refused (missing
@@ -185,9 +195,19 @@ public:
    * Fraction are detected and refused: FPSCommon does not govern
    * their frame rate, so the fallback could not honestly call the
    * result 720p30. Scope the code cannot detect is scope it must
-   * not silently claim. This is the stability test's last-resort
-   * OFFER — the caller must have the user's explicit confirmation
-   * before calling.
+   * not silently claim.
+   *
+   * Effect timing: the preset and bitrate apply at the next output
+   * start; the canvas, frame rate and recording-quality changes are
+   * read when OBS builds its video/outputs, so they land after an
+   * OBS restart — the caller says so, and the stability check's
+   * pending-retest flow verifies the result on the next launch.
+   *
+   * This is an OFFER, never an automatic action — the caller must
+   * have the user's explicit confirmation before calling. On a
+   * profile that is not plugin-managed, the caller must first warn
+   * that a smaller canvas changes scene shapes and recommend
+   * duplicating the profile (user ruling, 2026-11-08).
    *
    * @return True only when every value was written and saved.
    */

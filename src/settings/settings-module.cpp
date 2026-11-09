@@ -363,23 +363,33 @@ bool SettingsManager::applyConservativeFallback() {
     c.oldUint = config_get_uint(config, section, key);
     captured.push_back(c);
   };
-  // Capture with the same accessor type the write uses: OutputCX/CY
-  // are written with config_set_uint, so they are captured and
-  // restored as uints (an int round-trip would be the wrong discipline
-  // for a function whose contract is exact restore).
+  // Capture with the same accessor type the write uses: the canvas
+  // and output sizes are written with config_set_uint, so they are
+  // captured and restored as uints (an int round-trip would be the
+  // wrong discipline for a function whose contract is exact restore).
+  captureUint("Video", "BaseCX");
+  captureUint("Video", "BaseCY");
   captureUint("Video", "OutputCX");
   captureUint("Video", "OutputCY");
   captureString("Video", "FPSCommon");
   captureNumber("SimpleOutput", "VBitrate");
   captureString("SimpleOutput", "StreamEncoder");
+  captureString("SimpleOutput", "RecQuality");
   captureString("SimpleOutput", x264PresetKey.c_str());
 
+  config_set_uint(config, "Video", "BaseCX", FALLBACK_OUTPUT_WIDTH);
+  config_set_uint(config, "Video", "BaseCY", FALLBACK_OUTPUT_HEIGHT);
   config_set_uint(config, "Video", "OutputCX", FALLBACK_OUTPUT_WIDTH);
   config_set_uint(config, "Video", "OutputCY", FALLBACK_OUTPUT_HEIGHT);
   config_set_string(config, "Video", "FPSCommon", FALLBACK_FPS_COMMON);
   config_set_int(config, "SimpleOutput", "VBitrate",
                  FALLBACK_VIDEO_BITRATE_KBPS);
   config_set_string(config, "SimpleOutput", "StreamEncoder", "x264");
+  // One encode instead of two: recordings reuse the streaming
+  // encoder. (Constructor-frozen like every RecQuality change — it
+  // takes effect when OBS next builds its outputs, i.e. after a
+  // restart; the stability check's retest verifies it then.)
+  config_set_string(config, "SimpleOutput", "RecQuality", "Stream");
   // "ultrafast" is a verified x264 preset (presetsFor) and the bottom
   // of the stability ladder — the fallback pairs it with the encoder
   // switch above so the two always land together.
@@ -400,8 +410,9 @@ bool SettingsManager::applyConservativeFallback() {
                     "failed; previous values restored");
     return false;
   }
-  blog(LOG_INFO, "[Settings] Conservative fallback applied: 720p30, 2500 "
-                 "kbps, x264 ultrafast");
+  blog(LOG_INFO, "[Settings] Conservative fallback applied: canvas and "
+                 "output 720p30, 2500 kbps, x264 ultrafast, recording "
+                 "quality 'Same as stream' (single encode)");
   return true;
 }
 

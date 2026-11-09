@@ -150,7 +150,7 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
       new QPushButton(QStringLiteral("Re-run Auto-Configuration Wizard"));
   m_wizardButton->hide();
   m_fallbackButton = new QPushButton(
-      QStringLiteral("Apply conservative fallback (720p30, x264 ultrafast)"));
+      QStringLiteral("Apply full rescue (one encode, 720p, 30 fps)"));
   m_fallbackButton->hide();
   m_restoreButton = new QPushButton;
   m_restoreButton->hide();
@@ -457,9 +457,9 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
                     "\n\nEven at the fastest encoder setting tried (%1), your "
                     "PC dropped too many frames. You can also re-run OBS's "
                     "Auto-Configuration Wizard and let it pick lighter "
-                    "settings, or apply a conservative fallback (720p30 at "
-                    "2500 kbps, x264 ultrafast) — those two only happen if you "
-                    "pick them.")
+                    "settings, or apply the full rescue below (one encode, "
+                    "720p canvas and output at 30 fps) — those two only "
+                    "happen if you pick them.")
                     .arg(QString::fromStdString(outcome.finalPreset));
       } else {
         const char *display =
@@ -647,21 +647,41 @@ void StabilityDialog::onWizardClicked() {
 }
 
 void StabilityDialog::onFallbackClicked() {
+  // The confirmation names what the rescue actually does (the copy
+  // rule from the ladder design: clear, succinct, no unexplained
+  // labels) — and, on a profile that isn't plugin-managed, carries
+  // the canvas warning: a smaller canvas changes scene shapes, so
+  // duplicating the profile first is recommended (user ruling,
+  // 2026-11-08).
+  QString text = QStringLiteral(
+      "This is the strongest fix. Your recordings will use the same "
+      "encode as your stream — one encode instead of two — and your "
+      "canvas and output drop to 720p at 30 fps (2500 kbps, x264 "
+      "ultrafast). The canvas, frame-rate and recording changes take "
+      "effect when you restart OBS, and the check will offer to "
+      "re-run and verify them when you're back. You can change any "
+      "of it later in OBS Settings.");
+  profile::ProfileManager profiles;
+  if (!profiles.currentProfileIsManaged()) {
+    text += QStringLiteral(
+        "\n\nThis profile isn't a Quickstart profile. A smaller "
+        "canvas changes the shape of your scenes — items will need "
+        "adjusting afterwards. We recommend duplicating this profile "
+        "first (OBS's Profiles menu) so you keep an untouched copy.");
+  }
   const auto answer = QMessageBox::question(
-      this, QStringLiteral("Apply conservative fallback?"),
-      QStringLiteral("This changes your profile to 720p30 output at 2500 "
-                     "kbps with the x264 encoder at ultrafast. You can "
-                     "change any of it later in OBS Settings. Apply it?"),
+      this, QStringLiteral("Apply the full rescue?"), text,
       QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
   if (answer != QMessageBox::Yes)
     return;
   settings::SettingsManager settingsManager;
   if (settingsManager.applyConservativeFallback()) {
     QMessageBox::information(
-        this, QStringLiteral("Fallback applied"),
-        QStringLiteral("Your profile now uses 720p30 at 2500 kbps with "
-                       "x264 ultrafast. Run the stability check again "
-                       "whenever you're ready."));
+        this, QStringLiteral("Rescue applied"),
+        QStringLiteral("Saved. Restart OBS so the canvas, frame-rate "
+                       "and recording changes take effect — the "
+                       "stability check will offer to re-run and "
+                       "verify them when you're back."));
     accept();
   } else {
     QMessageBox::warning(
