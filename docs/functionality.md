@@ -134,7 +134,7 @@ Plugin test flow:
 
    * Step the encoder's quality control down its ladder (NVENC p-scale toward p1; QSV quality → speed; AMF Quality → Speed; x264 veryfast → ultrafast; VideoToolbox has no ladder — run once, then warn/offer)
    * Retry recording test (max 3 attempts)
-4. If still unstable after 3 attempts: warn the user and offer options — re-run OBS's Auto-Configuration Wizard, or apply a conservative fallback (720p30 @ 2500 kbps, x264 ultrafast) with explicit user confirmation. The plugin never silently rewrites the wizard's resolution/FPS/bitrate.
+4. If still unstable after 3 attempts: warn the user and offer the restart ladder (architecture §7) — lower recording quality one rung per restart (HQ → Small → Same as stream), each verified by a retest offered at the next launch; the full rescue (recording quality "Same as stream" + canvas and output 720p30 @ 2500 kbps, x264 ultrafast) as the last rung; or re-run OBS's Auto-Configuration Wizard. Every option needs explicit user confirmation. The plugin never silently rewrites the wizard's resolution/FPS/bitrate.
 5. Finalize optimized profile
 
 *Note (2026-09-29): Retry logic no longer lowers FPS/resolution/bitrate directly — those are owned by the Auto-Configuration Wizard. The test's role is validation (catching thermal throttling, background load, and driver issues the wizard's short probes miss). Audio filters are applied **before** the test, so it measures the real configuration including RNNoise's CPU cost; no test result feeds back into filter selection.*

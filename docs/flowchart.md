@@ -64,7 +64,35 @@
 
 ---
 
-## Phase 6: Create Scene Structure
+## Phase 6: Apply Audio Filters
+
+1. [Add RNNoise + Compressor + Limiter] (default chain) — benchmark RNNoise CPU cost during implementation; keep the Speex + Noise Gate fallback only if RNNoise proves expensive on min-spec hardware
+2. Filters go on **before** the performance test so the test measures the real configuration, including RNNoise's CPU cost. No test result feeds back into filter selection.
+
+---
+
+## Phase 7: Performance Test (Local Recording) — auto-run
+
+*Ordering (decided 2026-11-08): the test runs BEFORE scene creation (Phase 8). The ladder's last rung can shrink the canvas; running the test first means no scene layout exists yet for a canvas change to distort. The trade-off is known and accepted: the test then renders a near-empty scene, so its rendering-lag evidence slightly understates the finished setup's — the encoder load it verdicts on is unaffected. A confirmation re-run stays available from the summary phase and the Tools menu.*
+
+1. [Start 30-second local recording] — runs **automatically** as the performance-validation step with a progress dialog ("Making sure your PC can handle streaming…"); not presented as a skippable choice
+2. [Monitor metrics] → CPU %, GPU render lag, skipped frames
+3. (Decision: Metrics unstable?)
+
+   * Yes → [Step the encoder's quality control down its ladder] → Retry recording test. Ladder per encoder: **NVENC** preset p-scale toward p1 (p1 = max performance); **QSV** targetusage quality → speed; **AMF** quality preset Quality → Speed; **x264** preset veryfast → ultrafast. (**VideoToolbox** has no quality ladder — run the test once; on instability go straight to the warn/offer step instead of repeating an identical test.)
+   * Max retries: 3 attempts. The verdict is the **final** attempt's result.
+   * If still unstable after the attempts — the **restart ladder** (each rung is the smallest change that could work, verified by a retest after the restart it needs):
+
+     * [Offer: lower recording quality one rung] — HQ → Small → Same as stream (never a jump). Saved on confirmation; takes effect at the next OBS launch; the plugin records the pending retest and offers the verification run at launch (and in the check's intro if the reminder was silenced)
+     * [Last rung: the full rescue] — recording quality "Same as stream" + canvas and output 720p @ 30 fps, 2500 kbps, x264 ultrafast, with explicit confirmation; on a non-Quickstart profile, warn first that a smaller canvas changes scene shapes and recommend duplicating the profile
+     * [Or: re-run the Auto-Configuration Wizard]
+     * Never silently rewrite the wizard's resolution/FPS/bitrate — every rung is an explicit user choice
+   * No → Proceed to next phase
+4. Afterwards available via **Tools > Quickstart: Run stability check** (re-run after hardware changes or whenever something feels off)
+
+---
+
+## Phase 8: Create Scene Structure
 
 1. [Create Scenes] → Starting Soon, BRB, Just Chatting (full-screen webcam), Gameplay + Webcam, Gameplay Only, Stream Ended
    *Note: scenes and overlays are distinct — multiple scenes may share one overlay (overlay mapping in functionality.md).*
@@ -102,31 +130,6 @@
       - Overlays: Full-screen 1920x1080
 7. [Bind scene hotkeys] → Ctrl+Shift+1–6 → created scenes (opt-in; conflict-checked; bare number keys avoided — OBS hotkeys are system-global)
 8. [Create shortcut reference dock] → **View > Docks > Quickstart Shortcuts**: scene→hotkey map + common OBS shortcuts (start/stop streaming/recording, mute mic/desktop, studio mode). Lives in OBS window chrome via `obs_frontend_add_dock_by_id` — can never appear in program output or on stream. Enabled by default; hideable under View > Docks.
-
----
-
-## Phase 7: Apply Audio Filters
-
-1. [Add RNNoise + Compressor + Limiter] (default chain) — benchmark RNNoise CPU cost during implementation; keep the Speex + Noise Gate fallback only if RNNoise proves expensive on min-spec hardware
-2. Filters go on **before** the performance test so the test measures the real configuration, including RNNoise's CPU cost. No test result feeds back into filter selection.
-
----
-
-## Phase 8: Performance Test (Local Recording) — auto-run
-
-1. [Start 30-second local recording] — runs **automatically** as the final performance-validation step with a progress dialog ("Making sure your PC can handle streaming…"); not presented as a skippable choice
-2. [Monitor metrics] → CPU %, GPU render lag, skipped frames
-3. (Decision: Metrics unstable?)
-
-   * Yes → [Step the encoder's quality control down its ladder] → Retry recording test. Ladder per encoder: **NVENC** preset p-scale toward p1 (p1 = max performance); **QSV** targetusage quality → speed; **AMF** quality preset Quality → Speed; **x264** preset veryfast → ultrafast. (**VideoToolbox** has no quality ladder — run the test once; on instability go straight to the warn/offer step instead of repeating an identical test.)
-   * Max retries: 3 attempts
-
-     * If still unstable after 3 attempts:
-
-       * Warn the user; offer to re-run the Auto-Configuration Wizard or apply a conservative fallback (720p30 @ 2500 kbps, x264 ultrafast) with explicit confirmation
-       * Never silently rewrite the wizard's resolution/FPS/bitrate
-   * No → Proceed to next phase
-4. Afterwards available via **Tools > Quickstart: Run stability check** (re-run after hardware changes or whenever something feels off)
 
 ---
 
