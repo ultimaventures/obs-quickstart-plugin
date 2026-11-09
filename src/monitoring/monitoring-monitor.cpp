@@ -301,7 +301,7 @@ void StabilityMonitor::beginAttempt() {
       probeDir = fs::temp_directory_path(ec).u8string();
     }
     const QString stamp =
-        QDateTime::currentDateTime().toString("yyyyMMdd-hhmmss");
+        QDateTime::currentDateTime().toString("yyyyMMdd-hhmmss-zzz");
     m_probeFilePath = (fs::u8path(probeDir) /
                        fs::u8path("quickstart-probe-" + stamp.toStdString() +
                                   "-a" + std::to_string(m_attempt) + ".mkv"))
@@ -354,7 +354,17 @@ void StabilityMonitor::takeBaseline() {
       m_presetGoverned = false;
       m_outcome.presetGoverned = false;
       m_maxAttempts = m_attempt;
+      // The announced total shrank after attemptStarted already went
+      // out with the old one: re-announce, or the dialog's progress
+      // denominator stays stale for the rest of the run.
+      emit attemptStarted(m_attempt, m_maxAttempts);
     }
+    // Identity comes from the live probe, not the config map: when
+    // the native NVENC encoder was unavailable the probe fell back
+    // to the FFmpeg one (mirroring get_simple_output_encoder), and
+    // the outcome should name the encoder that actually ran.
+    if (!m_probe.encoderId().empty())
+      m_outcome.encoderId = m_probe.encoderId();
     blog(LOG_INFO,
          "[Monitoring] Measuring streaming encoder %s at preset '%s' "
          "(probe, stepping %s)",
@@ -411,6 +421,8 @@ void StabilityMonitor::takeBaseline() {
             m_presetGoverned = false;
             m_outcome.presetGoverned = false;
             m_maxAttempts = m_attempt;
+            // Re-announce the shrunken total (see the probe path).
+            emit attemptStarted(m_attempt, m_maxAttempts);
           }
         }
       }
@@ -572,8 +584,11 @@ bool StabilityMonitor::pollSettling() {
   // timeout) can enter settling before an output ever became active,
   // and a stop issued then would have nothing to stop. Keep issuing
   // the stops while finishing so a late-starting output is stopped
-  // instead of being left running.
-  if (obs_frontend_recording_active())
+  // instead of being left running. The frontend stop is gated on the
+  // frontend being part of this check: in streaming-only mode an
+  // active frontend recording is the USER's own, and stopping it
+  // from here would destroy their recording, not ours.
+  if (frontendExpected() && obs_frontend_recording_active())
     obs_frontend_recording_stop();
   if (m_probeStarted)
     m_probe.stopOutput();
@@ -582,7 +597,8 @@ bool StabilityMonitor::pollSettling() {
   m_lastTrackedFiles = now;
   SettleObservation observation;
   observation.recordingActive =
-      obs_frontend_recording_active() || (m_probeStarted && m_probe.active());
+      (frontendExpected() && obs_frontend_recording_active()) ||
+      (m_probeStarted && m_probe.active());
   observation.filesChanged = changed;
   observation.cancelRequested = m_settleCancelRequested;
   const std::string sibling = remuxSiblingPath();

@@ -523,14 +523,26 @@ MigrateResult SettingsManager::migrateToAdvancedMode() {
   // this config), so even a mid-write failure cannot truncate basic.ini.
   // ABitrate is intentionally NOT migrated: its Advanced-mode destination
   // is unverified, and the encoder default is safe.
+  // Capture AdvOut/Encoder before staging it: on a failed save the
+  // staged value must be restored/removed too — restoring only
+  // Output/Mode would leave an encoder the user never chose sitting
+  // in memory for a later, unrelated OBS save to persist.
+  const bool hadAdvEncoder = config_has_user_value(config, "AdvOut", "Encoder");
+  const char *oldAdvEncoderC = config_get_string(config, "AdvOut", "Encoder");
+  const std::string oldAdvEncoder = oldAdvEncoderC ? oldAdvEncoderC : "";
   config_set_string(config, "AdvOut", "Encoder", encoderId.c_str());
   config_set_string(config, "Output", "Mode", "Advanced");
   if (config_save_safe(config, "tmp", nullptr) != CONFIG_SUCCESS) {
     // Restore the in-memory mode so a retry sees Simple, not a phantom
-    // Advanced that was never committed to disk.
+    // Advanced that was never committed to disk — and the staged
+    // encoder with it.
     config_set_string(config, "Output", "Mode", "Simple");
+    if (hadAdvEncoder)
+      config_set_string(config, "AdvOut", "Encoder", oldAdvEncoder.c_str());
+    else
+      config_remove_value(config, "AdvOut", "Encoder");
     blog(LOG_ERROR, "[Settings] migrateToAdvancedMode: config_save_safe "
-                    "failed; mode restored to Simple");
+                    "failed; mode and staged encoder restored");
     return MigrateResult::WriteFailed;
   }
 

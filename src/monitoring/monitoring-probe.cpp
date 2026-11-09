@@ -8,14 +8,6 @@
 
 namespace obs_setup {
 namespace monitoring {
-namespace {
-
-bool startsWith(const std::string &s, const char *prefix) {
-  const std::string p(prefix);
-  return s.size() >= p.size() && s.compare(0, p.size(), p) == 0;
-}
-
-} // namespace
 
 StreamingProbe::~StreamingProbe() { stop(); }
 
@@ -37,24 +29,46 @@ bool StreamingProbe::start(config_t *config, const std::string &preset,
   }
 
   // The SimpleOutput::Update() construction, from the profile keys:
-  // CBR at VBitrate, the family preset. The FFmpeg NVENC encoder
-  // takes its preset under "preset2"; every other encoder uses
-  // "preset" (same special case as the frontend's own code).
-  obs_data_t *encSettings = obs_data_create();
-  obs_data_set_string(encSettings, "rate_control", "CBR");
+  // CBR at VBitrate, the family preset. The preset KEY follows the
+  // frontend's own rule (Update()): "preset2" only when the encoder
+  // id is a legacy FFmpeg NVENC id; "preset" for everything else.
   uint64_t bitrate = config_get_uint(config, "SimpleOutput", "VBitrate");
   if (bitrate == 0)
     bitrate = 6000;
-  obs_data_set_int(encSettings, "bitrate", static_cast<int64_t>(bitrate));
-  const EncoderFamily family = familyForEncoderId(m_encoderId);
-  if (family == EncoderFamily::NVENC && startsWith(m_encoderId, "ffmpeg_"))
-    obs_data_set_string(encSettings, "preset2", preset.c_str());
-  else
-    obs_data_set_string(encSettings, "preset", preset.c_str());
-
+  auto buildSettings = [&](const char *presetKey) {
+    obs_data_t *settings = obs_data_create();
+    obs_data_set_string(settings, "rate_control", "CBR");
+    obs_data_set_int(settings, "bitrate", static_cast<int64_t>(bitrate));
+    obs_data_set_string(settings, presetKey, preset.c_str());
+    return settings;
+  };
+  obs_data_t *encSettings = buildSettings("preset");
   m_encoder = obs_video_encoder_create(
       m_encoderId.c_str(), "quickstart_stream_probe", encSettings, nullptr);
   obs_data_release(encSettings);
+  if (!m_encoder) {
+    // get_simple_output_encoder() falls back to the FFmpeg NVENC
+    // encoder when the native one is unavailable (older NVIDIA
+    // stacks); mirror it, so the check still runs on machines where
+    // OBS itself streams through the fallback. (nvenc_av1 has no
+    // FFmpeg fallback in OBS's map either.)
+    const char *fallbackId = nullptr;
+    if (simpleEncoder && std::string(simpleEncoder) == "nvenc")
+      fallbackId = "ffmpeg_nvenc";
+    else if (simpleEncoder && std::string(simpleEncoder) == "nvenc_hevc")
+      fallbackId = "ffmpeg_hevc_nvenc";
+    if (fallbackId) {
+      blog(LOG_INFO,
+           "[Monitoring] Native encoder %s unavailable; probe falls "
+           "back to %s (mirrors get_simple_output_encoder)",
+           m_encoderId.c_str(), fallbackId);
+      m_encoderId = fallbackId;
+      obs_data_t *fbSettings = buildSettings("preset2");
+      m_encoder = obs_video_encoder_create(
+          m_encoderId.c_str(), "quickstart_stream_probe", fbSettings, nullptr);
+      obs_data_release(fbSettings);
+    }
+  }
   if (!m_encoder) {
     error =
         "Could not create the streaming test encoder (" + m_encoderId + ").";

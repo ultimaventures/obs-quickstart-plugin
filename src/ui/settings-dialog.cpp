@@ -208,7 +208,20 @@ void SettingsDialog::onApplyClicked() {
       allOk = false;
     }
   } else {
-    presetLine = "• Encoder preset: skipped (unsupported encoder)";
+    // The combo is disabled for two different reasons — the profile
+    // is in Advanced mode, or this encoder's presets aren't verified
+    // yet — and the report must name the real one.
+    config_t *config = obs_frontend_get_profile_config();
+    const char *modeC =
+        config ? config_get_string(config, "Output", "Mode") : nullptr;
+    const bool advancedMode =
+        modeC && QString::fromUtf8(modeC).compare(QStringLiteral("Advanced"),
+                                                  Qt::CaseInsensitive) == 0;
+    presetLine = advancedMode
+                     ? QStringLiteral("• Encoder preset: skipped (Advanced "
+                                      "output mode)")
+                     : QStringLiteral("• Encoder preset: skipped (encoder "
+                                      "not yet supported)");
   }
   const bool audioOk = m_manager.applyAudioSettings();
   const bool recordingOk = m_manager.applyRecordingSettings();

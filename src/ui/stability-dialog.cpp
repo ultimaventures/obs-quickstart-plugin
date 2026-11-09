@@ -631,6 +631,14 @@ void StabilityDialog::onWizardClicked() {
           "The wizard couldn't be started from here. You can start it "
           "any time from OBS's Tools menu > Auto-Configuration Wizard.");
       break;
+    default:
+      // A future WizardTriggerResult value must not fall through
+      // silently: the user clicked a button, so something visible
+      // has to happen.
+      message = QStringLiteral(
+          "The wizard couldn't be started from here. You can start it "
+          "any time from OBS's Tools menu > Auto-Configuration Wizard.");
+      break;
     }
     if (!message.isEmpty())
       QMessageBox::warning(nullptr, QStringLiteral("Auto-Configuration Wizard"),
