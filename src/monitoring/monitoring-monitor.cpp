@@ -246,8 +246,6 @@ void StabilityMonitor::beginAttempt() {
   m_cpuSamples = 0;
   m_cpuPeak = 0.0;
   m_streamingMetrics = Metrics{};
-  m_recordingMetrics = Metrics{};
-  m_haveRecordingMetrics = false;
   m_measuredPreset.clear();
   m_testFilePath.clear();
   m_probeFilePath.clear();
@@ -682,8 +680,6 @@ void StabilityMonitor::performCleanup(bool mayDelete) {
 void StabilityMonitor::sampleFinalMetrics() {
   if (!m_baselineTaken) {
     m_streamingMetrics = Metrics{};
-    m_recordingMetrics = Metrics{};
-    m_haveRecordingMetrics = false;
     return;
   }
   Metrics shared;
@@ -699,16 +695,16 @@ void StabilityMonitor::sampleFinalMetrics() {
 
   const uint32_t frontendDelta =
       static_cast<uint32_t>(frontendSkippedFrames() - m_baseSkippedFrames);
+  // One metrics record for the attempt: in combined mode these ARE
+  // the pair's numbers (the pipeline counters are shared), read from
+  // the probe's counter when the probe ran — it is the encoder whose
+  // preset the stepping ladder controls — and from the frontend
+  // counter otherwise (shared-encoder / Advanced modes).
   m_streamingMetrics = shared;
   m_streamingMetrics.skippedFrames =
       probeExpected() ? static_cast<uint32_t>(m_probe.skippedFrames() -
                                               m_baseProbeSkippedFrames)
                       : frontendDelta;
-  m_haveRecordingMetrics = m_mode == Mode::Combined;
-  if (m_haveRecordingMetrics) {
-    m_recordingMetrics = shared;
-    m_recordingMetrics.skippedFrames = frontendDelta;
-  }
 }
 
 void StabilityMonitor::completeAttempt() {
@@ -737,23 +733,6 @@ void StabilityMonitor::completeAttempt() {
   record.stability = evaluateStability(m_streamingMetrics);
   m_outcome.attempts.push_back(record);
 
-  if (m_haveRecordingMetrics && m_attempt == 1) {
-    // The recording verdict comes from the FIRST attempt: the one
-    // window where the user's real streaming preset was in force.
-    AttemptRecord recRecord;
-    recRecord.attempt = 1;
-    recRecord.preset = ""; // code-built by OBS; nothing config-known
-    recRecord.metrics = m_recordingMetrics;
-    recRecord.stability = evaluateStability(m_recordingMetrics);
-    m_outcome.recordingAttempt = recRecord;
-    m_outcome.recordingMeasured = true;
-    m_outcome.recordingKind = recRecord.stability.tier == Tier::Stable
-                                  ? TestOutcome::Kind::Stable
-                                  : (recRecord.stability.tier == Tier::Marginal
-                                         ? TestOutcome::Kind::Marginal
-                                         : TestOutcome::Kind::Unstable);
-  }
-
   blog(LOG_INFO,
        "[Monitoring] Attempt %d: streaming %llu frames, lagged %.2f%%, "
        "skipped %.2f%% -> %s",
@@ -765,25 +744,25 @@ void StabilityMonitor::completeAttempt() {
            : (record.stability.tier == Tier::Marginal ? "MARGINAL"
                                                       : "UNSTABLE"));
 
-  if (record.stability.tier == Tier::Stable) {
-    // Headline mapping for combined mode: the recording side's
-    // first-attempt verdict can still downgrade the headline.
-    if (m_mode == Mode::Combined && m_outcome.recordingMeasured &&
-        m_outcome.recordingKind != TestOutcome::Kind::Stable) {
-      m_outcome.failedSide = FailedSide::Recording;
-      finish(m_outcome.recordingKind);
-      return;
-    }
+  // The verdict is the FINAL attempt's tier. decideOutcome() is the
+  // pure policy (unit-tested); this function only performs the side
+  // effects the decision names: apply a step, restore on Marginal,
+  // finish. The M4 guard lives in the policy: a step is offered only
+  // when the preset is governed, attempts remain, and a rung exists
+  // — never step a config key that does not control the encoder
+  // being measured.
+  const auto nextStep = nextLadderStep(m_outcome.family, m_currentPreset);
+  const AttemptDecision decision =
+      decideOutcome(record.stability.tier, m_mode == Mode::Combined,
+                    m_mode == Mode::AdvancedRecording, m_presetGoverned,
+                    m_attempt < m_maxAttempts, nextStep,
+                    m_currentPreset != m_outcome.originalPreset);
+  switch (decision.action) {
+  case AttemptDecision::Action::FinishStable:
     finish(TestOutcome::Kind::Stable);
     return;
-  }
-  if (record.stability.tier == Tier::Marginal) {
-    // Marginal evidence does not justify keeping a stepped preset:
-    // restore the original and let the user retest, rather than
-    // silently locking in a quality reduction on borderline data. A
-    // FAILED restore is part of the outcome — never a reassurance.
-    if (m_currentPreset != m_outcome.originalPreset &&
-        m_mode != Mode::AdvancedRecording) {
+  case AttemptDecision::Action::FinishMarginal: {
+    if (decision.restoreOriginal) {
       settings::SettingsManager settingsManager;
       if (settingsManager.applyEncoderPreset(m_outcome.originalPreset)) {
         blog(LOG_INFO,
@@ -802,35 +781,27 @@ void StabilityMonitor::completeAttempt() {
     finish(TestOutcome::Kind::Marginal);
     return;
   }
-  // Unstable.
-  if (m_presetGoverned && m_attempt < m_maxAttempts) {
-    // The governed check is the M4 guard: never step a config key
-    // that does not control the encoder being measured.
-    const auto step = nextLadderStep(m_outcome.family, m_currentPreset);
-    if (step.has_value()) {
-      settings::SettingsManager settingsManager;
-      if (settingsManager.applyEncoderPreset(*step)) {
-        blog(LOG_INFO,
-             "[Monitoring] Stepping encoder preset '%s' -> '%s' "
-             "and retrying",
-             m_currentPreset.c_str(), step->c_str());
-        m_currentPreset = *step;
-        beginAttempt();
-        return;
-      }
-      finish(TestOutcome::Kind::Error,
-             "Could not apply the stepped encoder preset '" + *step + "'.");
+  case AttemptDecision::Action::StepAndRetry: {
+    settings::SettingsManager settingsManager;
+    if (settingsManager.applyEncoderPreset(decision.stepPreset)) {
+      blog(LOG_INFO,
+           "[Monitoring] Stepping encoder preset '%s' -> '%s' "
+           "and retrying",
+           m_currentPreset.c_str(), decision.stepPreset.c_str());
+      m_currentPreset = decision.stepPreset;
+      beginAttempt();
       return;
     }
+    finish(TestOutcome::Kind::Error,
+           "Could not apply the stepped encoder preset '" +
+               decision.stepPreset + "'.");
+    return;
   }
-  m_outcome.failedSide =
-      m_mode == Mode::AdvancedRecording
-          ? FailedSide::Recording
-          : (m_mode == Mode::Combined && m_outcome.recordingMeasured &&
-                     m_outcome.recordingKind == TestOutcome::Kind::Unstable
-                 ? FailedSide::Both
-                 : FailedSide::Streaming);
-  finish(TestOutcome::Kind::Unstable);
+  case AttemptDecision::Action::FinishUnstable:
+    m_outcome.failedSide = decision.failedSide;
+    finish(TestOutcome::Kind::Unstable);
+    return;
+  }
 }
 
 void StabilityMonitor::finish(TestOutcome::Kind kind,

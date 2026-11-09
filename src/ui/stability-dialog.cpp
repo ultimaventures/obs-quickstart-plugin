@@ -65,21 +65,21 @@ QString attemptsSummary(const monitoring::TestOutcome &outcome) {
  * root video output — verified in the 30.0.2 and 31.1.1 sources), so
  * in combined mode the attempt numbers ARE the pair's numbers, and
  * printing them a second time as a recording verdict would invent a
- * distinction the measurement doesn't contain. Attribution between
- * the two sides comes from the stepping retries, and the note says
- * so.
+ * distinction the measurement doesn't contain. The note says what
+ * the stepping retries can and cannot prove, in those terms.
  */
 QString recordingSection(const monitoring::TestOutcome &outcome) {
-  if (!outcome.combinedMode || !outcome.recordingMeasured)
+  if (!outcome.combinedMode)
     return QString();
   return QStringLiteral(
       "\n\nStreaming and recording were measured together, in the same "
       "30 seconds. OBS counts frames skipped by encoding for the whole "
       "video pipeline, not per encoder, so the numbers above are the "
-      "pair's numbers. That's why the retries step the streaming "
-      "encoder down: if a step fixes it, the streaming side was the "
-      "strain; if no step fixes it, the recording encode is the other "
-      "half of the load.");
+      "pair's numbers — the measurement can't say which side strained. "
+      "Stepping the streaming encoder preset down is the one "
+      "adjustment the test can make while it runs, so that's what the "
+      "retries change: a pass means the combination works at the new "
+      "preset.");
 }
 
 QString gateNote(const monitoring::TestOutcome &outcome) {
@@ -342,7 +342,6 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
   m_lastOutcome = outcome;
   const QString cleanup = QString::fromStdString(outcome.cleanupNote);
   using Kind = monitoring::TestOutcome::Kind;
-  using FailedSide = monitoring::FailedSide;
   switch (outcome.kind) {
   case Kind::Stable: {
     QString body;
@@ -390,18 +389,7 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
   }
   case Kind::Marginal: {
     QString body;
-    if (outcome.failedSide == FailedSide::Recording) {
-      // Streaming passed; the simultaneous recording side was
-      // borderline. Nothing was stepped, so there is nothing to
-      // restore — say what actually happened.
-      body += attemptsSummary(outcome);
-      body += QStringLiteral(
-          "\n\nYour streaming passed. Recording at the same time was "
-          "right at the edge: it dropped a few frames, but not many. One "
-          "30-second test on a busy PC can look like this — close other "
-          "heavy apps and run the check again; if it keeps landing here, "
-          "the follow-ups below can lighten your settings.");
-    } else if (outcome.presetRestoreFailed) {
+    if (outcome.presetRestoreFailed) {
       body += attemptsSummary(outcome);
       body += QStringLiteral(
                   "\n\nYour PC was right at the edge: it dropped a few "
@@ -450,15 +438,6 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
           "Re-running OBS's Auto-Configuration Wizard or applying the "
           "conservative fallback below can lighten your settings — those "
           "only happen if you pick them.");
-    } else if (outcome.failedSide == FailedSide::Recording) {
-      body += attemptsSummary(outcome);
-      body += QStringLiteral(
-          "\n\nYour PC kept up with streaming, but recording in high "
-          "quality at the same time dropped too many frames. One fix is "
-          "to record at the same quality as your stream — in OBS "
-          "Settings > Output, set Recording Quality to 'Same as "
-          "stream'. That runs one encode instead of two. The follow-ups "
-          "below can also lighten your settings.");
     } else {
       body += attemptsSummary(outcome);
       if (outcome.finalPreset != outcome.originalPreset) {

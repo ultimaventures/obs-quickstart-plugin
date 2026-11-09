@@ -203,6 +203,96 @@ TEST(AttemptsAvailable, LadderlessAndInvalidGetOne) {
   EXPECT_EQ(attemptsAvailable(EncoderFamily::NVENC, "bogus"), 1);
 }
 
+// ---- decideOutcome ----
+// The verdict is the FINAL attempt's tier. The primary reviewer's
+// named cases: Unstable -> Stable gives Stable; Unstable x N gives
+// Unstable with Pair (combined); the Marginal restore path.
+
+TEST(DecideOutcome, StableFinishesStableEvenAfterEarlierUnstable) {
+  // Attempt 2 or 3 at a stepped preset: nothing about attempt 1 can
+  // downgrade this. (Regression test for the removed first-attempt
+  // "recording verdict" veto.)
+  const auto d = decideOutcome(Tier::Stable, /*combinedMode=*/true,
+                               /*advancedMode=*/false, /*presetGoverned=*/true,
+                               /*stepsRemain=*/true, std::string("ultrafast"),
+                               /*presetWasStepped=*/true);
+  EXPECT_EQ(d.action, AttemptDecision::Action::FinishStable);
+  EXPECT_EQ(d.failedSide, FailedSide::None);
+}
+
+TEST(DecideOutcome, UnstableWithAStepRemainingRetriesAtThatStep) {
+  const auto d = decideOutcome(Tier::Unstable, true, false, true, true,
+                               std::string("superfast"), false);
+  EXPECT_EQ(d.action, AttemptDecision::Action::StepAndRetry);
+  EXPECT_EQ(d.stepPreset, "superfast");
+}
+
+TEST(DecideOutcome, UnstableNeverStepsAnUngovernedPreset) {
+  // The M4 guard: no stepping a key that doesn't control the
+  // measured encoder — even with attempts and a rung nominally left.
+  const auto d = decideOutcome(Tier::Unstable, false, false,
+                               /*presetGoverned=*/false, true,
+                               std::string("superfast"), false);
+  EXPECT_EQ(d.action, AttemptDecision::Action::FinishUnstable);
+  EXPECT_EQ(d.failedSide, FailedSide::Streaming);
+}
+
+TEST(DecideOutcome, UnstableNeverStepsWithoutARung) {
+  const auto d = decideOutcome(Tier::Unstable, false, false, true, true,
+                               std::nullopt, true);
+  EXPECT_EQ(d.action, AttemptDecision::Action::FinishUnstable);
+}
+
+TEST(DecideOutcome, ExhaustedCombinedRunBlamesThePair) {
+  // Unstable x N in combined mode: attribution is the pair, never a
+  // per-side blame the shared counter cannot support.
+  const auto d =
+      decideOutcome(Tier::Unstable, /*combinedMode=*/true, false, true,
+                    /*stepsRemain=*/false, std::string("ultrafast"), true);
+  EXPECT_EQ(d.action, AttemptDecision::Action::FinishUnstable);
+  EXPECT_EQ(d.failedSide, FailedSide::Pair);
+}
+
+TEST(DecideOutcome, ExhaustedStreamingOnlyRunBlamesStreaming) {
+  const auto d = decideOutcome(Tier::Unstable, false, false, true, false,
+                               std::nullopt, true);
+  EXPECT_EQ(d.action, AttemptDecision::Action::FinishUnstable);
+  EXPECT_EQ(d.failedSide, FailedSide::Streaming);
+}
+
+TEST(DecideOutcome, AdvancedRunBlamesRecording) {
+  const auto d = decideOutcome(Tier::Unstable, false, /*advancedMode=*/true,
+                               false, false, std::nullopt, false);
+  EXPECT_EQ(d.action, AttemptDecision::Action::FinishUnstable);
+  EXPECT_EQ(d.failedSide, FailedSide::Recording);
+}
+
+TEST(DecideOutcome, MarginalAfterSteppingRestoresTheOriginal) {
+  const auto d = decideOutcome(Tier::Marginal, true, false, true, true,
+                               std::string("ultrafast"),
+                               /*presetWasStepped=*/true);
+  EXPECT_EQ(d.action, AttemptDecision::Action::FinishMarginal);
+  EXPECT_TRUE(d.restoreOriginal);
+}
+
+TEST(DecideOutcome, MarginalWithoutSteppingRestoresNothing) {
+  const auto d = decideOutcome(Tier::Marginal, false, false, true, true,
+                               std::string("superfast"),
+                               /*presetWasStepped=*/false);
+  EXPECT_EQ(d.action, AttemptDecision::Action::FinishMarginal);
+  EXPECT_FALSE(d.restoreOriginal);
+}
+
+TEST(DecideOutcome, MarginalInAdvancedModeRestoresNothing) {
+  // Advanced mode never steps; a stepped flag there must not trigger
+  // a restore of a preset the monitor doesn't own.
+  const auto d = decideOutcome(Tier::Marginal, false, /*advancedMode=*/true,
+                               false, false, std::nullopt,
+                               /*presetWasStepped=*/true);
+  EXPECT_EQ(d.action, AttemptDecision::Action::FinishMarginal);
+  EXPECT_FALSE(d.restoreOriginal);
+}
+
 // ---- SettleTracker ----
 
 namespace {

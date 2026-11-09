@@ -121,6 +121,37 @@ int attemptsAvailable(EncoderFamily family, const std::string &currentPreset) {
   return attempts;
 }
 
+AttemptDecision decideOutcome(Tier tier, bool combinedMode, bool advancedMode,
+                              bool presetGoverned, bool stepsRemain,
+                              const std::optional<std::string> &nextStep,
+                              bool presetWasStepped) {
+  AttemptDecision decision;
+  switch (tier) {
+  case Tier::Stable:
+    decision.action = AttemptDecision::Action::FinishStable;
+    return decision;
+  case Tier::Marginal:
+    decision.action = AttemptDecision::Action::FinishMarginal;
+    // Marginal evidence never justifies keeping a stepped preset —
+    // except in Advanced mode, where the monitor never steps, this
+    // is exactly "a step was taken and not yet restored".
+    decision.restoreOriginal = presetWasStepped && !advancedMode;
+    return decision;
+  case Tier::Unstable:
+    break;
+  }
+  if (presetGoverned && stepsRemain && nextStep.has_value()) {
+    decision.action = AttemptDecision::Action::StepAndRetry;
+    decision.stepPreset = *nextStep;
+    return decision;
+  }
+  decision.action = AttemptDecision::Action::FinishUnstable;
+  decision.failedSide = advancedMode   ? FailedSide::Recording
+                        : combinedMode ? FailedSide::Pair
+                                       : FailedSide::Streaming;
+  return decision;
+}
+
 bool recordingPresetGovernedByConfig(EncoderFamily family,
                                      const std::string &recQuality) {
   // Only "Stream" quality shares the streaming encoder instance —

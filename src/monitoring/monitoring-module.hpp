@@ -159,6 +159,66 @@ int maxAttempts(EncoderFamily family);
 int attemptsAvailable(EncoderFamily family, const std::string &currentPreset);
 
 /**
+ * Which side of a check a failure is attributed to (dialog copy keys
+ * off it). Combined mode measures the streaming+recording PAIR
+ * through one pipeline counter, so a combined failure is Pair: the
+ * combination was too heavy. It is deliberately NOT "both sides
+ * failed" — the measurement cannot show that, and no Recording value
+ * exists for combined mode because there is no separate recording
+ * measurement to fail. Recording is for Advanced mode, which measures
+ * the recording output alone; Streaming is for checks that measured
+ * the streaming encode alone.
+ */
+enum class FailedSide { None, Streaming, Recording, Pair };
+
+/** What the monitor should do with a completed attempt. */
+struct AttemptDecision {
+  enum class Action {
+    FinishStable,   ///< The final attempt passed: finish Stable.
+    FinishMarginal, ///< Borderline: finish Marginal (restoring the
+                    ///< original preset first when restoreOriginal).
+    FinishUnstable, ///< No step remains: finish Unstable with
+                    ///< failedSide as the attribution.
+    StepAndRetry    ///< Apply stepPreset and run another attempt.
+  };
+  Action action = Action::FinishUnstable;
+  /** Attribution for FinishUnstable; None otherwise. */
+  FailedSide failedSide = FailedSide::None;
+  /** FinishMarginal only: the run stepped the preset, and marginal
+   *  evidence does not justify keeping the step — put the original
+   *  back before finishing. */
+  bool restoreOriginal = false;
+  /** StepAndRetry only: the preset to apply for the next attempt. */
+  std::string stepPreset;
+};
+
+/**
+ * @brief Decides the outcome of a completed attempt, purely.
+ *
+ * The verdict is the FINAL attempt's tier — full stop. Earlier
+ * attempts inform the run only through the stepping history (which
+ * preset is in force, whether steps remain); no earlier attempt's
+ * numbers can downgrade a later pass. (An earlier design kept the
+ * first attempt's combined-window numbers in a separate "recording
+ * verdict" that vetoed a later Stable — reporting a fixed problem as
+ * a failure, blamed on a side the shared pipeline counter cannot
+ * distinguish. Removed 2026-11-08 on three reviewers' convergent
+ * findings; the fields went with it so the shape cannot return.)
+ *
+ * Attribution for an exhausted Unstable run comes only from what was
+ * measured: Advanced mode measured recording alone (Recording);
+ * combined mode measured the pair (Pair); anything else measured the
+ * streaming encode (Streaming). Stepping is offered only when the
+ * preset is governed, attempts remain, and nextStep names a rung —
+ * the caller computes nextStep with nextLadderStep() so this function
+ * stays free of ladder tables. Pure function.
+ */
+AttemptDecision decideOutcome(Tier tier, bool combinedMode, bool advancedMode,
+                              bool presetGoverned, bool stepsRemain,
+                              const std::optional<std::string> &nextStep,
+                              bool presetWasStepped);
+
+/**
  * @brief Whether the recording encoder's preset is governed by the
  * Simple-mode preset config key — i.e. whether stepping that key
  * (settings::applyEncoderPreset) would actually change the encoder
