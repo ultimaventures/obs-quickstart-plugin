@@ -45,6 +45,10 @@ add_executable(
     settings_tests
     ${CMAKE_CURRENT_LIST_DIR}/settings_tests.cpp
     ${PROJECT_SOURCE_DIR}/src/settings/settings-module.cpp
+    # stepRecordingQualityDown calls monitoring's pure ladder table;
+    # that TU makes no OBS/Qt calls, so it links into this binary
+    # without stubs.
+    ${PROJECT_SOURCE_DIR}/src/monitoring/monitoring-module.cpp
 )
 target_include_directories(
     settings_tests

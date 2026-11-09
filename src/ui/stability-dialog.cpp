@@ -16,6 +16,7 @@
 #include <util/base.h>
 #include <util/config-file.h>
 
+#include "monitoring/monitoring-ladder-state.hpp"
 #include "monitoring/monitoring-module.hpp"
 #include "profile/profile-module.hpp"
 #include "settings/settings-module.hpp"
@@ -23,6 +24,24 @@
 namespace obs_setup {
 namespace ui {
 namespace {
+
+QString currentProfileName() {
+  char *nameC = obs_frontend_get_current_profile();
+  QString name = nameC ? QString::fromUtf8(nameC) : QString();
+  bfree(nameC);
+  return name;
+}
+
+/** The profile's effective recording quality ("" when unreadable):
+ *  config_get_string resolves any registered default, matching what
+ *  OBS will build its recording encoder from. */
+std::string effectiveRecordingQuality() {
+  config_t *config = obs_frontend_get_profile_config();
+  if (!config)
+    return "";
+  const char *q = config_get_string(config, "SimpleOutput", "RecQuality");
+  return q ? q : "";
+}
 
 QString presetText(const std::string &preset) {
   return preset.empty() ? QStringLiteral("preset not reported")
@@ -149,6 +168,9 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
   m_wizardButton =
       new QPushButton(QStringLiteral("Re-run Auto-Configuration Wizard"));
   m_wizardButton->hide();
+  m_qualityButton =
+      new QPushButton(QStringLiteral("Lower recording quality one step"));
+  m_qualityButton->hide();
   m_fallbackButton = new QPushButton(
       QStringLiteral("Apply full rescue (one encode, 720p, 30 fps)"));
   m_fallbackButton->hide();
@@ -195,6 +217,35 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
                        "where it is."));
   }
 
+  // An unfinished ladder from a previous session is surfaced here,
+  // not just in the launch reminder (which the user may have
+  // silenced — the record itself is kept; see
+  // monitoring-ladder-state.hpp). This run is its verification.
+  {
+    monitoring::PendingRetest pending;
+    if (monitoring::loadPendingRetest(pending) &&
+        currentProfileName() == QString::fromStdString(pending.profileName)) {
+      QString resume;
+      if (pending.stage == "fallback") {
+        resume =
+            QStringLiteral("Picking up where you left off: the full rescue was "
+                           "applied last time. This run verifies it.\n\n");
+      } else {
+        resume = QStringLiteral("Picking up where you left off: recording "
+                                "quality was lowered from %1 to %2 last "
+                                "time. This run checks whether your PC can "
+                                "keep up now.\n\n")
+                     .arg(QString::fromStdString(
+                              monitoring::recordingQualityDisplayName(
+                                  pending.fromQuality)),
+                          QString::fromStdString(
+                              monitoring::recordingQualityDisplayName(
+                                  pending.toQuality)));
+      }
+      m_attemptLabel->setText(resume + m_attemptLabel->text());
+    }
+  }
+
   auto *layout = new QVBoxLayout(this);
   layout->addWidget(m_headingLabel);
   layout->addWidget(m_attemptLabel);
@@ -203,6 +254,7 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
   layout->addWidget(m_statsLabel);
   layout->addWidget(m_bodyScroll);
   layout->addWidget(m_wizardButton);
+  layout->addWidget(m_qualityButton);
   layout->addWidget(m_fallbackButton);
   layout->addWidget(m_restoreButton);
   layout->addWidget(m_startButton);
@@ -221,6 +273,8 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
           &StabilityDialog::onCancelClicked);
   connect(m_wizardButton, &QPushButton::clicked, this,
           &StabilityDialog::onWizardClicked);
+  connect(m_qualityButton, &QPushButton::clicked, this,
+          &StabilityDialog::onQualityStepClicked);
   connect(m_fallbackButton, &QPushButton::clicked, this,
           &StabilityDialog::onFallbackClicked);
   connect(m_restoreButton, &QPushButton::clicked, this,
@@ -342,6 +396,17 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
   m_lastOutcome = outcome;
   const QString cleanup = QString::fromStdString(outcome.cleanupNote);
   using Kind = monitoring::TestOutcome::Kind;
+  // A pending ladder retest resolves when its verification run
+  // passes or lands borderline — the applied step did its job. Any
+  // other ending leaves the record in place: Unstable means the
+  // ladder continues from the follow-ups below; Cancelled/Busy/Error
+  // verified nothing.
+  if (outcome.kind == Kind::Stable || outcome.kind == Kind::Marginal) {
+    monitoring::PendingRetest pending;
+    if (monitoring::loadPendingRetest(pending) &&
+        currentProfileName() == QString::fromStdString(pending.profileName))
+      monitoring::clearPendingRetest();
+  }
   switch (outcome.kind) {
   case Kind::Stable: {
     QString body;
@@ -495,6 +560,15 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
                     ? QStringLiteral("Go back to %1 anyway")
                           .arg(QString::fromStdString(outcome.originalPreset))
                     : QString());
+    // The ladder's next rung, when there is one: a pair was
+    // measured (combined mode) and a lower recording-quality rung
+    // exists. (Advanced mode measures recording alone and never
+    // offers Simple-mode steps; shared-encoder profiles are already
+    // at the bottom rung by construction.)
+    if (outcome.combinedMode &&
+        !monitoring::nextRecordingQualityStep(effectiveRecordingQuality())
+             .empty())
+      m_qualityButton->show();
     break;
   }
   case Kind::Busy:
@@ -538,6 +612,9 @@ void StabilityDialog::showResults(const QString &heading, const QString &body,
   m_bodyScroll->verticalScrollBar()->setValue(0);
   m_wizardButton->setVisible(offerFollowUps);
   m_fallbackButton->setVisible(offerFollowUps);
+  // The quality-step button is NOT a generic follow-up: onFinished
+  // shows it only for an Unstable combined result with a rung left.
+  m_qualityButton->hide();
   // The button's label is chosen by the caller because its meaning
   // differs by outcome: an OVERRIDE on stepped results ("Go back to
   // %1 anyway" — the user accepts the frame drops the body warns
@@ -646,6 +723,79 @@ void StabilityDialog::onWizardClicked() {
   });
 }
 
+void StabilityDialog::onQualityStepClicked() {
+  // The ladder's restart step. Over-communicated on purpose (the
+  // design rule): what changes, why a restart is needed, and how the
+  // change gets verified — but kept to a few lines, because copy
+  // nobody reads communicates nothing.
+  const std::string from = effectiveRecordingQuality();
+  const std::string to = monitoring::nextRecordingQualityStep(from);
+  if (to.empty())
+    return; // The button only shows when a rung exists.
+  const auto answer = QMessageBox::question(
+      this, QStringLiteral("Lower recording quality one step?"),
+      QStringLiteral(
+          "Your PC still couldn't keep up after the streaming steps. "
+          "The next thing to try is recording quality: %1 → %2.\n\n"
+          "OBS can't apply that while it runs. We'll save it now; "
+          "when you restart OBS it takes effect, and the check will "
+          "offer to re-run and verify it. Save the step?")
+          .arg(QString::fromStdString(
+                   monitoring::recordingQualityDisplayName(from)),
+               QString::fromStdString(
+                   monitoring::recordingQualityDisplayName(to))),
+      QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+  if (answer != QMessageBox::Yes)
+    return;
+
+  settings::SettingsManager settingsManager;
+  std::string appliedFrom, appliedTo;
+  const auto result =
+      settingsManager.stepRecordingQualityDown(appliedFrom, appliedTo);
+  if (result != settings::QualityStepResult::Stepped) {
+    QMessageBox::warning(
+        this, QStringLiteral("Step not saved"),
+        QStringLiteral("The recording-quality step could not be "
+                       "saved, so nothing was changed."));
+    return;
+  }
+
+  // Put the streaming preset back to the user's original: the
+  // quality step gets verified against the settings they'd rather
+  // keep, and the retest steps it again only if it still fails. A
+  // failed put-back is disclosed, never silent.
+  bool presetLeftStepped = false;
+  if (m_lastOutcome.finalPreset != m_lastOutcome.originalPreset &&
+      !m_lastOutcome.originalPreset.empty()) {
+    presetLeftStepped =
+        !settingsManager.applyEncoderPreset(m_lastOutcome.originalPreset);
+  }
+
+  monitoring::PendingRetest pending;
+  pending.profileName = currentProfileName().toStdString();
+  pending.stage = "quality";
+  pending.fromQuality = appliedFrom;
+  pending.toQuality = appliedTo;
+  monitoring::savePendingRetest(pending);
+
+  QString message =
+      QStringLiteral("Saved: recording quality is now %1. Restart "
+                     "OBS for it to take effect — the check will "
+                     "offer to re-run and verify it when you're "
+                     "back.")
+          .arg(QString::fromStdString(
+              monitoring::recordingQualityDisplayName(appliedTo)));
+  if (presetLeftStepped) {
+    message += QStringLiteral("\n\nNote: your streaming preset couldn't be put "
+                              "back to %1 automatically, so it's still %2. You "
+                              "can change it in OBS Settings > Output.")
+                   .arg(QString::fromStdString(m_lastOutcome.originalPreset),
+                        QString::fromStdString(m_lastOutcome.finalPreset));
+  }
+  QMessageBox::information(this, QStringLiteral("Step saved"), message);
+  accept();
+}
+
 void StabilityDialog::onFallbackClicked() {
   // The confirmation names what the rescue actually does (the copy
   // rule from the ladder design: clear, succinct, no unexplained
@@ -676,6 +826,15 @@ void StabilityDialog::onFallbackClicked() {
     return;
   settings::SettingsManager settingsManager;
   if (settingsManager.applyConservativeFallback()) {
+    // The rescue is the ladder's last rung: its canvas/frame-rate/
+    // recording changes take effect across a restart, so it leaves
+    // the same pending-retest record a quality step does (a fresh
+    // ladder action re-arms the reminder even if an earlier one was
+    // silenced — this position hasn't been verified yet).
+    monitoring::PendingRetest pending;
+    pending.profileName = currentProfileName().toStdString();
+    pending.stage = "fallback";
+    monitoring::savePendingRetest(pending);
     QMessageBox::information(
         this, QStringLiteral("Rescue applied"),
         QStringLiteral("Saved. Restart OBS so the canvas, frame-rate "

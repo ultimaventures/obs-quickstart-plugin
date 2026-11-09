@@ -66,6 +66,7 @@ private slots:
   void onCancelClicked();
   void onWizardClicked();
   void onFallbackClicked();
+  void onQualityStepClicked();
   void onRestoreClicked();
   /** 1s UI refresh: phase line, countdown, overall progress. */
   void refreshProgressUi();
@@ -92,6 +93,9 @@ private:
   QPushButton *m_startButton = nullptr;
   QPushButton *m_cancelButton = nullptr;
   QPushButton *m_wizardButton = nullptr;
+  /** The ladder's restart step: lower recording quality one rung.
+   *  Shown only on an Unstable combined result with a rung left. */
+  QPushButton *m_qualityButton = nullptr;
   QPushButton *m_fallbackButton = nullptr;
   QPushButton *m_restoreButton = nullptr;
   QPushButton *m_closeButton = nullptr;

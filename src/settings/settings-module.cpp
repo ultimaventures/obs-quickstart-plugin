@@ -1,5 +1,7 @@
 #include "settings-module.hpp"
 
+#include "../monitoring/monitoring-module.hpp"
+
 #include <algorithm>
 #include <filesystem>
 
@@ -414,6 +416,57 @@ bool SettingsManager::applyConservativeFallback() {
                  "output 720p30, 2500 kbps, x264 ultrafast, recording "
                  "quality 'Same as stream' (single encode)");
   return true;
+}
+
+QualityStepResult
+SettingsManager::stepRecordingQualityDown(std::string &fromQuality,
+                                          std::string &toQuality) {
+  fromQuality.clear();
+  toQuality.clear();
+  config_t *config = obs_frontend_get_profile_config();
+  if (!config) {
+    blog(LOG_ERROR, "[Settings] stepRecordingQualityDown: no profile config");
+    return QualityStepResult::WriteFailed;
+  }
+  const char *modeC = config_get_string(config, "Output", "Mode");
+  if (!modeC || std::string(modeC) != "Simple") {
+    blog(LOG_ERROR, "[Settings] stepRecordingQualityDown: profile is not "
+                    "in Simple mode (or mode is unset); step refused");
+    return QualityStepResult::NotSimpleMode;
+  }
+  // Effective quality: config_get_string resolves any registered
+  // default, so a profile that never saved the setting still steps
+  // from the quality OBS would actually use.
+  const char *currentC =
+      config_get_string(config, "SimpleOutput", "RecQuality");
+  const std::string current = currentC ? currentC : "";
+  const std::string next = monitoring::nextRecordingQualityStep(current);
+  if (next.empty()) {
+    blog(LOG_INFO,
+         "[Settings] stepRecordingQualityDown: no lower rung from "
+         "quality '%s'; nothing changed",
+         current.c_str());
+    return QualityStepResult::NoStepExists;
+  }
+  const bool hadValue =
+      config_has_user_value(config, "SimpleOutput", "RecQuality");
+  config_set_string(config, "SimpleOutput", "RecQuality", next.c_str());
+  if (config_save_safe(config, "tmp", nullptr) != CONFIG_SUCCESS) {
+    if (hadValue)
+      config_set_string(config, "SimpleOutput", "RecQuality", current.c_str());
+    else
+      config_remove_value(config, "SimpleOutput", "RecQuality");
+    blog(LOG_ERROR, "[Settings] stepRecordingQualityDown: config_save_safe "
+                    "failed; previous quality restored");
+    return QualityStepResult::WriteFailed;
+  }
+  fromQuality = current;
+  toQuality = next;
+  blog(LOG_INFO,
+       "[Settings] Recording quality stepped down: '%s' -> '%s' "
+       "(takes effect at the next OBS launch)",
+       current.c_str(), next.c_str());
+  return QualityStepResult::Stepped;
 }
 
 MigrateResult SettingsManager::migrateToAdvancedMode() {

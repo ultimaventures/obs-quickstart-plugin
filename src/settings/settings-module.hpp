@@ -97,6 +97,15 @@ std::vector<std::string> presetsFor(const std::string &encoderId);
  */
 std::string defaultPresetFor(const std::string &encoderId);
 
+/** Outcome of SettingsManager::stepRecordingQualityDown(). */
+enum class QualityStepResult {
+  Stepped,       ///< One rung written and saved; from/to are set.
+  NoStepExists,  ///< Already at "Stream", or the stored quality is
+                 ///< not one of OBS's four values; nothing changed.
+  NotSimpleMode, ///< Output/Mode is not "Simple"; nothing changed.
+  WriteFailed,   ///< The save failed; the old value was restored.
+};
+
 /** Outcome of SettingsManager::migrateToAdvancedMode(). */
 enum class MigrateResult {
   Success,       ///< Migrated; caller should show the recording-settings modal.
@@ -212,6 +221,31 @@ public:
    * @return True only when every value was written and saved.
    */
   bool applyConservativeFallback();
+
+  /**
+   * @brief Lowers SimpleOutput/RecQuality by ONE rung (the stability
+   * ladder's restart step): HQ -> Small -> Stream (monitoring::
+   * nextRecordingQualityStep holds the table).
+   *
+   * One rung, never a jump to the bottom: each step is the smallest
+   * change that could work, and the pending-retest flow verifies it
+   * after the restart this change needs — RecQuality is read when
+   * OBS builds its outputs (SimpleOutput's constructor), so the new
+   * value takes effect on the next OBS launch, not mid-session. The
+   * caller owns communicating that, and recording the pending
+   * retest (monitoring::savePendingRetest).
+   *
+   * Reads the EFFECTIVE quality (config_get_string, so a registered
+   * default counts); writes with the capture-and-restore discipline:
+   * on a failed save the previous state is restored exactly (a key
+   * that had no user value is removed again). Simple mode only, by
+   * the same user-value rule as applyConservativeFallback.
+   *
+   * @param fromQuality  Set to the previous quality on Stepped.
+   * @param toQuality    Set to the new quality on Stepped.
+   */
+  QualityStepResult stepRecordingQualityDown(std::string &fromQuality,
+                                             std::string &toQuality);
 
   /**
    * @brief Migrates Simple-mode streaming settings to Advanced mode.

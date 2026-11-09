@@ -219,6 +219,34 @@ AttemptDecision decideOutcome(Tier tier, bool combinedMode, bool advancedMode,
                               bool presetWasStepped);
 
 /**
+ * @brief The next recording-quality rung DOWN (toward performance)
+ * in Simple mode, or "" when no lower rung exists.
+ *
+ * The stored vocabulary is exactly four strings (OBS 31.1.1,
+ * frontend/settings/OBSBasicSettings.cpp, the ADD_QUALITY combo
+ * entries): "Stream", "Small", "HQ", "Lossless". The cost ladder
+ * (frontend/utility/SimpleOutput.cpp, UpdateRecordingSettings):
+ * "HQ" encodes at CRF/CQP 16 (Apple 70) — the UI's "Indistinguishable
+ * Quality"; "Small" at CRF/CQP 23 (Apple 50) — the UI's "High
+ * Quality, Medium File Size"; "Stream" runs no second encode at all.
+ * So the steps are HQ -> Small -> Stream. "Lossless" is a separate
+ * uncompressed output type, not a lossy rung; stepping from it lands
+ * on "HQ" (leaving the lossless output behind is itself the saving
+ * that matters there — file size, not encode cost). Unknown strings
+ * have no step: never guess at a value OBS didn't define. Pure
+ * function.
+ */
+std::string nextRecordingQualityStep(const std::string &currentQuality);
+
+/**
+ * @brief Short user-facing name for a stored recording-quality
+ * string ("HQ" -> "Indistinguishable Quality", "Small" -> "High
+ * Quality", "Stream" -> "Same as stream", "Lossless" -> "Lossless").
+ * Unknown strings are returned unchanged. Pure function.
+ */
+std::string recordingQualityDisplayName(const std::string &quality);
+
+/**
  * @brief Whether the recording encoder's preset is governed by the
  * Simple-mode preset config key — i.e. whether stepping that key
  * (settings::applyEncoderPreset) would actually change the encoder

@@ -293,6 +293,29 @@ TEST(DecideOutcome, MarginalInAdvancedModeRestoresNothing) {
   EXPECT_FALSE(d.restoreOriginal);
 }
 
+// ---- recording-quality ladder ----
+
+TEST(RecordingQualityStep, WalksTheWholeLadder) {
+  EXPECT_EQ(nextRecordingQualityStep("Lossless"), "HQ");
+  EXPECT_EQ(nextRecordingQualityStep("HQ"), "Small");
+  EXPECT_EQ(nextRecordingQualityStep("Small"), "Stream");
+  EXPECT_EQ(nextRecordingQualityStep("Stream"), "");
+}
+
+TEST(RecordingQualityStep, UnknownQualitiesHaveNoStep) {
+  EXPECT_EQ(nextRecordingQualityStep(""), "");
+  EXPECT_EQ(nextRecordingQualityStep("MQ"), "");
+  EXPECT_EQ(nextRecordingQualityStep("stream"), "");
+}
+
+TEST(RecordingQualityDisplayName, NamesEveryRung) {
+  EXPECT_EQ(recordingQualityDisplayName("Stream"), "Same as stream");
+  EXPECT_EQ(recordingQualityDisplayName("Small"), "High Quality");
+  EXPECT_EQ(recordingQualityDisplayName("HQ"), "Indistinguishable Quality");
+  EXPECT_EQ(recordingQualityDisplayName("Lossless"), "Lossless");
+  EXPECT_EQ(recordingQualityDisplayName("bogus"), "bogus");
+}
+
 // ---- SettleTracker ----
 
 namespace {

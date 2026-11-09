@@ -737,6 +737,60 @@ TEST_F(SettingsTest, FallbackRestoresEverythingOnSaveFailure) {
   EXPECT_EQ(g_fakeConfig.uints.count({"Video", "BaseCY"}), 0u);
 }
 
+// ---- stepRecordingQualityDown ----
+
+TEST_F(SettingsTest, QualityStepWalksOneRungAtATime) {
+  g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}] = "HQ";
+  settings::SettingsManager mgr;
+  std::string from, to;
+  EXPECT_EQ(mgr.stepRecordingQualityDown(from, to),
+            settings::QualityStepResult::Stepped);
+  EXPECT_EQ(from, "HQ");
+  EXPECT_EQ(to, "Small");
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]), "Small");
+  EXPECT_TRUE(g_fakeConfig.saveCalled);
+
+  EXPECT_EQ(mgr.stepRecordingQualityDown(from, to),
+            settings::QualityStepResult::Stepped);
+  EXPECT_EQ(from, "Small");
+  EXPECT_EQ(to, "Stream");
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]), "Stream");
+
+  EXPECT_EQ(mgr.stepRecordingQualityDown(from, to),
+            settings::QualityStepResult::NoStepExists);
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]), "Stream");
+}
+
+TEST_F(SettingsTest, QualityStepRefusesAdvancedMode) {
+  g_fakeConfig.strings[{"Output", "Mode"}] = "Advanced";
+  g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}] = "HQ";
+  settings::SettingsManager mgr;
+  std::string from, to;
+  EXPECT_EQ(mgr.stepRecordingQualityDown(from, to),
+            settings::QualityStepResult::NotSimpleMode);
+  EXPECT_FALSE(g_fakeConfig.saveCalled);
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]), "HQ");
+}
+
+TEST_F(SettingsTest, QualityStepRestoresOnSaveFailure) {
+  g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}] = "HQ";
+  g_fakeConfig.saveFails = true;
+  settings::SettingsManager mgr;
+  std::string from, to;
+  EXPECT_EQ(mgr.stepRecordingQualityDown(from, to),
+            settings::QualityStepResult::WriteFailed);
+  EXPECT_EQ((g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}]), "HQ");
+}
+
+TEST_F(SettingsTest, QualityStepUnknownQualityHasNoStep) {
+  g_fakeConfig.strings[{"SimpleOutput", "RecQuality"}] = "MQ";
+  settings::SettingsManager mgr;
+  std::string from, to;
+  EXPECT_EQ(mgr.stepRecordingQualityDown(from, to),
+            settings::QualityStepResult::NoStepExists);
+  EXPECT_FALSE(g_fakeConfig.saveCalled);
+}
+
 // ---- applyEncoderPreset mode verification ----
 
 TEST_F(SettingsTest, ApplyEncoderPresetRefusesAdvancedProfile) {

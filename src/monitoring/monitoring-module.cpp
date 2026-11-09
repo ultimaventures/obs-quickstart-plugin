@@ -152,6 +152,28 @@ AttemptDecision decideOutcome(Tier tier, bool combinedMode, bool advancedMode,
   return decision;
 }
 
+std::string nextRecordingQualityStep(const std::string &currentQuality) {
+  if (currentQuality == "Lossless")
+    return "HQ";
+  if (currentQuality == "HQ")
+    return "Small";
+  if (currentQuality == "Small")
+    return "Stream";
+  return "";
+}
+
+std::string recordingQualityDisplayName(const std::string &quality) {
+  if (quality == "Stream")
+    return "Same as stream";
+  if (quality == "Small")
+    return "High Quality";
+  if (quality == "HQ")
+    return "Indistinguishable Quality";
+  if (quality == "Lossless")
+    return "Lossless";
+  return quality;
+}
+
 bool recordingPresetGovernedByConfig(EncoderFamily family,
                                      const std::string &recQuality) {
   // Only "Stream" quality shares the streaming encoder instance —

@@ -8,6 +8,8 @@
 #include <QMessageBox>
 #include <QPushButton>
 
+#include <QTimer>
+
 #include "profile/profile-module.hpp"
 #include "ui/ui-module.hpp"
 
@@ -148,6 +150,21 @@ static void on_stability_check_menu_item_clicked(void *private_data) {
   obs_setup::ui::show_stability_dialog();
 }
 
+/**
+ * @brief Frontend events. FINISHED_LOADING is where the stability
+ * ladder's pending retest gets its launch prompt: a ladder action
+ * applied last session (recording-quality step / full rescue) only
+ * takes effect across this restart, and its verification is owed.
+ * Deferred to the event loop so the main window is fully up before
+ * any modal appears.
+ */
+static void on_frontend_event(enum obs_frontend_event event, void *) {
+  if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
+    QTimer::singleShot(0,
+                       []() { obs_setup::ui::maybe_prompt_pending_retest(); });
+  }
+}
+
 bool obs_module_load(void) {
   obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
 
@@ -160,6 +177,7 @@ bool obs_module_load(void) {
   obs_frontend_add_tools_menu_item("OBS Quickstart: Run stability check",
                                    on_stability_check_menu_item_clicked,
                                    nullptr);
+  obs_frontend_add_event_callback(on_frontend_event, nullptr);
 
   return true;
 }
