@@ -1,8 +1,12 @@
 #include "monitoring-ladder-state.hpp"
 
+#include <filesystem>
+
 #include <obs-module.h>
 #include <obs.h>
 #include <util/config-file.h>
+
+namespace fs = std::filesystem;
 
 namespace obs_setup {
 namespace monitoring {
@@ -21,6 +25,15 @@ bool openState(config_t **out, bool create) {
   const std::string path = ladderStatePath();
   if (path.empty())
     return false;
+  if (create) {
+    // config_open creates the FILE, not its parent directories, and
+    // the module's plugin_config directory does not exist until
+    // something creates it — on a fresh install this write is the
+    // something. (Rig-caught 2026-11-08: without this, the first
+    // ladder record silently failed to land.)
+    std::error_code ec;
+    fs::create_directories(fs::u8path(path).parent_path(), ec);
+  }
   if (config_open(out, path.c_str(),
                   create ? CONFIG_OPEN_ALWAYS : CONFIG_OPEN_EXISTING) !=
           CONFIG_SUCCESS ||
