@@ -2,6 +2,7 @@
 #define OBS_SETUP_MONITORING_MONITORING_LADDER_STATE_HPP
 
 #include <string>
+#include <vector>
 
 namespace obs_setup {
 namespace monitoring {
@@ -24,12 +25,20 @@ namespace monitoring {
  * ladder means setup was exited partway, and the position must stay
  * on the books so re-entering the check can offer to pick up where
  * it left off. The record is cleared only when a retest actually
- * resolves the ladder (Stable/Marginal) or a newer ladder action
- * replaces it.
+ * resolves the ladder (a Stable/Marginal run that measured what the
+ * step changed).
  *
- * Stored in the plugin's own config directory
- * (stability-ladder.ini), NOT in any profile: it describes the
- * plugin's progress, not the user's settings.
+ * Records are PER PROFILE (user ruling, 2026-11-10): several
+ * profiles can have unfinished ladders at once, and one profile's
+ * ladder action never overwrites another's record. All records live
+ * in the one plugin-owned file (stability-ladder.ini, in the
+ * plugin's config directory — NOT in any profile: it describes the
+ * plugin's progress, not the user's settings), one section per
+ * profile, plus an index of the profiles that have records so stale
+ * ones (profile deleted or renamed away) can be dropped. Records
+ * written by the first ladder build (a single shared record) are
+ * adopted when their profile matches, and retired on the next save
+ * or clear for that profile.
  */
 struct PendingRetest {
   /** Profile the ladder action belongs to (frontend profile name).
@@ -45,18 +54,27 @@ struct PendingRetest {
   bool remindSuppressed = false;
 };
 
-/** Saves (or replaces) the pending-retest record. */
+/** Saves (or replaces) the record for pending.profileName. Other
+ *  profiles' records are untouched. */
 bool savePendingRetest(const PendingRetest &pending);
 
-/** Loads the pending record, if one exists. */
-bool loadPendingRetest(PendingRetest &out);
+/** Loads the record belonging to profileName, if one exists and is
+ *  well-formed (see pendingRetestWellFormed). */
+bool loadPendingRetest(const std::string &profileName, PendingRetest &out);
 
-/** Deletes the pending record (the ladder resolved). */
-void clearPendingRetest();
+/** Deletes profileName's record (its ladder resolved). Other
+ *  profiles' records are untouched. */
+void clearPendingRetest(const std::string &profileName);
 
-/** Sets remindSuppressed on the existing record, keeping everything
- *  else. No-op when no record exists. */
-void suppressPendingReminder();
+/** Sets remindSuppressed on profileName's record, keeping
+ *  everything else. No-op when that profile has no record. */
+void suppressPendingReminder(const std::string &profileName);
+
+/** Drops records whose profile is not in existingProfiles (the
+ *  profile was deleted or renamed, so the record can never fire).
+ *  Called at startup with the frontend's profile list. */
+void dropPendingRetestsForMissingProfiles(
+    const std::vector<std::string> &existingProfiles);
 
 } // namespace monitoring
 } // namespace obs_setup

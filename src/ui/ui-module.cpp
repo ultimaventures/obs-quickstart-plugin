@@ -3,9 +3,14 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <obs-frontend-api.h>
+#include <util/dstr.h> // strlist_free
+
+#include <string>
+#include <vector>
 
 #include "monitoring/monitoring-ladder-state.hpp"
 #include "monitoring/monitoring-module.hpp"
+#include "profile/profile-module.hpp"
 #include "settings-dialog.hpp"
 #include "stability-dialog.hpp"
 
@@ -35,15 +40,34 @@ void show_stability_dialog() {
 }
 
 void maybe_prompt_pending_retest() {
-  monitoring::PendingRetest pending;
-  if (!monitoring::loadPendingRetest(pending) || pending.remindSuppressed)
-    return;
-  // The record belongs to one profile; it never fires on another.
   char *profileNameC = obs_frontend_get_current_profile();
   const QString currentProfile =
       profileNameC ? QString::fromUtf8(profileNameC) : QString();
   bfree(profileNameC);
-  if (currentProfile != QString::fromStdString(pending.profileName))
+  if (currentProfile.isEmpty())
+    return;
+
+  // Housekeeping first: a record whose profile was deleted or
+  // renamed can never fire — drop it so it doesn't linger forever.
+  std::vector<std::string> existingProfiles;
+  if (char **profiles = obs_frontend_get_profiles()) {
+    for (size_t i = 0; profiles[i]; ++i)
+      existingProfiles.emplace_back(profiles[i]);
+    strlist_free(profiles);
+  }
+  if (!existingProfiles.empty())
+    monitoring::dropPendingRetestsForMissingProfiles(existingProfiles);
+
+  // If the user is already live, don't interrupt them with the
+  // prompt: the record stays, it just doesn't fire this launch.
+  profile::ProfileManager profileManager;
+  if (profileManager.isBusy())
+    return;
+
+  // The record belongs to one profile; it never fires on another.
+  monitoring::PendingRetest pending;
+  if (!monitoring::loadPendingRetest(currentProfile.toStdString(), pending) ||
+      pending.remindSuppressed)
     return;
 
   QMainWindow *main_window =
@@ -82,7 +106,7 @@ void maybe_prompt_pending_retest() {
   } else if (box.clickedButton() == suppressButton) {
     // Silences the reminder only — the ladder record stays, so the
     // check's intro can still offer to pick up where it left off.
-    monitoring::suppressPendingReminder();
+    monitoring::suppressPendingReminder(currentProfile.toStdString());
   }
   (void)laterButton;
 }

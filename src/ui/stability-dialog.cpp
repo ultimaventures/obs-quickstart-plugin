@@ -32,6 +32,28 @@ QString currentProfileName() {
   return name;
 }
 
+/** Whether any scene in the current collection contains an item —
+ *  i.e. whether there is a layout a canvas change would reshape. */
+bool anySceneHasSources() {
+  obs_frontend_source_list scenes = {};
+  obs_frontend_get_scenes(&scenes);
+  bool found = false;
+  for (size_t i = 0; i < scenes.sources.num && !found; ++i) {
+    obs_scene_t *scene = obs_scene_from_source(scenes.sources.array[i]);
+    if (!scene)
+      continue;
+    obs_scene_enum_items(
+        scene,
+        [](obs_scene_t *, obs_sceneitem_t *, void *param) {
+          *static_cast<bool *>(param) = true;
+          return false; // The first item is all the evidence needed.
+        },
+        &found);
+  }
+  obs_frontend_source_list_free(&scenes);
+  return found;
+}
+
 /** The profile's effective recording quality ("" when unreadable):
  *  config_get_string resolves any registered default, matching what
  *  OBS will build its recording encoder from. */
@@ -223,8 +245,8 @@ StabilityDialog::StabilityDialog(QWidget *parent) : QDialog(parent) {
   // monitoring-ladder-state.hpp). This run is its verification.
   {
     monitoring::PendingRetest pending;
-    if (monitoring::loadPendingRetest(pending) &&
-        currentProfileName() == QString::fromStdString(pending.profileName)) {
+    if (monitoring::loadPendingRetest(currentProfileName().toStdString(),
+                                      pending)) {
       QString resume;
       if (pending.stage == "fallback") {
         resume =
@@ -397,16 +419,30 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
   const QString cleanup = QString::fromStdString(outcome.cleanupNote);
   using Kind = monitoring::TestOutcome::Kind;
   // A pending ladder retest resolves when its verification run
-  // passes or lands borderline — the applied step did its job. Any
-  // other ending leaves the record in place: Unstable means the
-  // ladder continues from the follow-ups below; Cancelled/Busy/Error
-  // verified nothing.
+  // passes or lands borderline — but only a run that measured what
+  // the step changed can resolve it. The step changed the RECORDING
+  // side, so a streaming-only pass never measured it: the record
+  // stays, and the results say so. Any other ending also leaves the
+  // record in place: Unstable means the ladder continues from the
+  // follow-ups below; Cancelled/Busy/Error verified nothing.
+  bool pendingStepStillUnverified = false;
   if (outcome.kind == Kind::Stable || outcome.kind == Kind::Marginal) {
+    const std::string profile = currentProfileName().toStdString();
     monitoring::PendingRetest pending;
-    if (monitoring::loadPendingRetest(pending) &&
-        currentProfileName() == QString::fromStdString(pending.profileName))
-      monitoring::clearPendingRetest();
+    if (monitoring::loadPendingRetest(profile, pending)) {
+      if (m_monitor.streamingOnlyMode())
+        pendingStepStillUnverified = true;
+      else
+        monitoring::clearPendingRetest(profile);
+    }
   }
+  const QString pendingNote =
+      pendingStepStillUnverified
+          ? QStringLiteral("\n\nNote: this run measured streaming only, so the "
+                           "recording fix waiting from last time is still "
+                           "unverified. Run the check again without the "
+                           "streaming-only option to verify it.")
+          : QString();
   switch (outcome.kind) {
   case Kind::Stable: {
     QString body;
@@ -440,6 +476,7 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
           "(recording quality is 'same as stream'), so this one check "
           "covered both.");
     body += gateNote(outcome);
+    body += pendingNote;
     if (!cleanup.isEmpty())
       body += QStringLiteral("\n\n") + cleanup;
     showResults(outcome.advancedMode
@@ -479,6 +516,7 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
       body += recordingSection(outcome);
     }
     body += gateNote(outcome);
+    body += pendingNote;
     if (!cleanup.isEmpty())
       body += QStringLiteral("\n\n") + cleanup;
     showResults(QStringLiteral("Your setup is borderline."), body, true,
@@ -500,9 +538,8 @@ void StabilityDialog::onFinished(const monitoring::TestOutcome &outcome) {
       body += QStringLiteral(
           "\n\nYour recording encoder runs at settings this test can't "
           "adjust, and your PC dropped too many frames with it. "
-          "Re-running OBS's Auto-Configuration Wizard or applying the "
-          "conservative fallback below can lighten your settings — those "
-          "only happen if you pick them.");
+          "Re-running OBS's Auto-Configuration Wizard can lighten your "
+          "settings — that only happens if you pick it.");
     } else {
       body += attemptsSummary(outcome);
       if (outcome.finalPreset != outcome.originalPreset) {
@@ -611,7 +648,11 @@ void StabilityDialog::showResults(const QString &heading, const QString &body,
   m_bodyScroll->show();
   m_bodyScroll->verticalScrollBar()->setValue(0);
   m_wizardButton->setVisible(offerFollowUps);
-  m_fallbackButton->setVisible(offerFollowUps);
+  // The rescue writes Simple-mode keys and refuses Advanced
+  // profiles, so it is not offered on an Advanced result: offering
+  // it there would let the user confirm and only then learn it
+  // "could not be applied".
+  m_fallbackButton->setVisible(offerFollowUps && !m_lastOutcome.advancedMode);
   // The quality-step button is NOT a generic follow-up: onFinished
   // shows it only for an Unstable combined result with a rung left.
   m_qualityButton->hide();
@@ -698,9 +739,10 @@ void StabilityDialog::onWizardClicked() {
       break;
     case R::WrongProfileActive:
       message = QStringLiteral(
-          "The active profile changed, so the wizard wasn't started — "
-          "it only runs against the profile this check used. You can "
-          "start it from OBS's Tools menu.");
+          "The active profile changed since you clicked, so the wizard "
+          "wasn't started. It runs against the profile that's active "
+          "when you click — switch back to the profile this check "
+          "used, or start the wizard from OBS's Tools menu.");
       break;
     case R::SlotMissing:
     case R::InvokeFailed:
@@ -776,15 +818,29 @@ void StabilityDialog::onQualityStepClicked() {
   pending.stage = "quality";
   pending.fromQuality = appliedFrom;
   pending.toQuality = appliedTo;
-  monitoring::savePendingRetest(pending);
+  const bool reminderSaved = monitoring::savePendingRetest(pending);
 
-  QString message =
-      QStringLiteral("Saved: recording quality is now %1. Restart "
-                     "OBS for it to take effect — the check will "
-                     "offer to re-run and verify it when you're "
-                     "back.")
-          .arg(QString::fromStdString(
-              monitoring::recordingQualityDisplayName(appliedTo)));
+  QString message;
+  if (reminderSaved) {
+    message = QStringLiteral("Saved: recording quality is now %1. Restart "
+                             "OBS for it to take effect — the check will "
+                             "offer to re-run and verify it when you're "
+                             "back.")
+                  .arg(QString::fromStdString(
+                      monitoring::recordingQualityDisplayName(appliedTo)));
+  } else {
+    // The step itself is saved in the profile; only the retest
+    // record failed to land. Say exactly that — promising a prompt
+    // that will never fire is how state bugs become trust bugs.
+    message = QStringLiteral("Saved: recording quality is now %1. Restart "
+                             "OBS for it to take effect. The reminder to "
+                             "re-run the check couldn't be saved, so you "
+                             "won't be prompted — after restarting, you can "
+                             "run the stability check from the Tools menu "
+                             "to verify it.")
+                  .arg(QString::fromStdString(
+                      monitoring::recordingQualityDisplayName(appliedTo)));
+  }
   if (presetLeftStepped) {
     message += QStringLiteral("\n\nNote: your streaming preset couldn't be put "
                               "back to %1 automatically, so it's still %2. You "
@@ -799,10 +855,13 @@ void StabilityDialog::onQualityStepClicked() {
 void StabilityDialog::onFallbackClicked() {
   // The confirmation names what the rescue actually does (the copy
   // rule from the ladder design: clear, succinct, no unexplained
-  // labels) — and, on a profile that isn't plugin-managed, carries
-  // the canvas warning: a smaller canvas changes scene shapes, so
-  // duplicating the profile first is recommended (user ruling,
-  // 2026-11-08).
+  // labels). The canvas warning keys on whether there is a layout
+  // to break — any scene holding items — not on the profile's
+  // origin: a Quickstart profile that already has scenes is
+  // reshaped exactly like anyone else's, and an empty profile has
+  // nothing to warn about. Profiles that aren't plugin-managed
+  // additionally get the duplicate-first recommendation (user
+  // ruling, 2026-11-08).
   QString text = QStringLiteral(
       "This is the strongest fix. Your recordings will use the same "
       "encode as your stream — one encode instead of two — and your "
@@ -812,12 +871,15 @@ void StabilityDialog::onFallbackClicked() {
       "re-run and verify them when you're back. You can change any "
       "of it later in OBS Settings.");
   profile::ProfileManager profiles;
-  if (!profiles.currentProfileIsManaged()) {
+  if (anySceneHasSources()) {
     text += QStringLiteral(
-        "\n\nThis profile isn't a Quickstart profile. A smaller "
-        "canvas changes the shape of your scenes — items will need "
-        "adjusting afterwards. We recommend duplicating this profile "
-        "first (OBS's Profiles menu) so you keep an untouched copy.");
+        "\n\nCareful: a smaller canvas changes the shape of your "
+        "scenes — items will need adjusting afterwards.");
+    if (!profiles.currentProfileIsManaged())
+      text += QStringLiteral(
+          " This profile isn't a Quickstart profile, so we "
+          "recommend duplicating it first (OBS's Profiles menu) so "
+          "you keep an untouched copy.");
   }
   const auto answer = QMessageBox::question(
       this, QStringLiteral("Apply the full rescue?"), text,
@@ -834,13 +896,20 @@ void StabilityDialog::onFallbackClicked() {
     monitoring::PendingRetest pending;
     pending.profileName = currentProfileName().toStdString();
     pending.stage = "fallback";
-    monitoring::savePendingRetest(pending);
+    const bool reminderSaved = monitoring::savePendingRetest(pending);
     QMessageBox::information(
         this, QStringLiteral("Rescue applied"),
-        QStringLiteral("Saved. Restart OBS so the canvas, frame-rate "
-                       "and recording changes take effect — the "
-                       "stability check will offer to re-run and "
-                       "verify them when you're back."));
+        reminderSaved
+            ? QStringLiteral("Saved. Restart OBS so the canvas, frame-rate "
+                             "and recording changes take effect — the "
+                             "stability check will offer to re-run and "
+                             "verify them when you're back.")
+            : QStringLiteral(
+                  "Saved. Restart OBS so the canvas, frame-rate and "
+                  "recording changes take effect. The reminder to re-run "
+                  "the check couldn't be saved, so you won't be prompted "
+                  "— after restarting, you can run the stability check "
+                  "from the Tools menu to verify them."));
     accept();
   } else {
     QMessageBox::warning(
