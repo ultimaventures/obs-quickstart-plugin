@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator> // istreambuf_iterator
@@ -25,6 +26,7 @@
 #include <obs-frontend-api.h>
 #include <obs-module.h>       // obs_current_module (stubbed below)
 #include <util/base.h>        // blog
+#include <util/bmem.h>        // bmalloc (obs_module_config_path stub)
 #include <util/config-file.h> // config_get_string, config_get_uint
 
 #include "profile-module.hpp"
@@ -44,13 +46,31 @@ extern "C" {
 
 void blog(int, const char *, ...) { g_blogCalled = true; }
 
-// obs_module_config_path() (used by backupExistingProfile()) expands to
+// obs_module_config_path() expands to
 // obs_module_get_config_path(obs_current_module(), ...). In current OBS
 // headers obs_current_module is a per-plugin function (defined by
 // OBS_DECLARE_MODULE in a real plugin), not a global, so the test binary
-// defines the function here. It is never called — backupExistingProfile()
-// is not under test — so it returns null.
-obs_module_t *obs_current_module(void) { return nullptr; }
+// defines it here, returning a dummy non-null module. The matching
+// obs_module_get_config_path stub below resolves into g_moduleConfigDir.
+obs_module_t *obs_current_module(void) {
+  static int dummyModule;
+  return reinterpret_cast<obs_module_t *>(&dummyModule);
+}
+
+// Directory the config-path stub resolves into; set by the registry
+// tests. The registry functions use the REAL libobs config
+// implementation (config_open & friends are not stubbed), so the
+// fresh-directory test exercises the actual file creation behavior.
+std::string g_moduleConfigDir;
+
+char *obs_module_get_config_path(obs_module_t *, const char *file) {
+  if (g_moduleConfigDir.empty() || !file)
+    return nullptr;
+  const std::string full = g_moduleConfigDir + "/" + file;
+  char *out = static_cast<char *>(bmalloc(full.size() + 1));
+  std::memcpy(out, full.c_str(), full.size() + 1);
+  return out;
+}
 
 // Minimal fake backing the config_get_* stubs: snapshotOutputConfig() reads
 // the wizard-owned keys through these, so tests drive the "after" values
@@ -177,6 +197,30 @@ TEST_F(FilesystemTest, NonAsciiPathsRoundTrip) {
   writeFile(cafe / "basic.ini", "name=Caf\u00e9\n");
   ASSERT_TRUE(profile::copyDirectoryTree(cafe.u8string(), dest.u8string()));
   EXPECT_EQ(readFile(dest / "basic.ini"), "name=Caf\u00e9\n");
+}
+
+// ---- managed-profile registry ----
+
+TEST_F(FilesystemTest, RegistryWriteCreatesMissingConfigDirectory) {
+  // Fresh install: the plugin config directory does not exist yet.
+  // config_open creates the registry file, not its parent
+  // directories, so the write must create them first — otherwise
+  // registration silently fails and the profile reads as unmanaged.
+  // The entry is verified at the file level: this binary stubs
+  // config_get_string for the snapshot tests, so the matching read
+  // function cannot run here.
+  const fs::path configDir = sandbox_ / "plugin-config-not-created";
+  ASSERT_FALSE(fs::exists(configDir));
+  g_moduleConfigDir = configDir.u8string();
+
+  profile::ProfileManager manager;
+  EXPECT_TRUE(manager.writeRegisteredName("id-1", "My Profile"));
+  const fs::path registryFile = configDir / "managed-profiles.ini";
+  ASSERT_TRUE(fs::exists(registryFile));
+  const std::string contents = readFile(registryFile);
+  EXPECT_NE(contents.find("id-1"), std::string::npos) << contents;
+  EXPECT_NE(contents.find("My Profile"), std::string::npos) << contents;
+  g_moduleConfigDir.clear();
 }
 
 // ---- backupDestinationFor ----

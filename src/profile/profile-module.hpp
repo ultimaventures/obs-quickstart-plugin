@@ -188,17 +188,22 @@ public:
    * @brief Launches OBS's Auto-Configuration Wizard on the active profile.
    *
    * Must not be called while any output is active (streaming, recording,
-   * replay buffer, or virtual camera). As a safety guard, the
-   * call is refused with WrongProfileActive unless the currently active
-   * profile is exactly `expectedProfile` (the Quickstart profile created by
-   * setupQuickstartProfile) — the wizard rewrites the *active* profile, so
-   * launching it against the user's real profile would break the plugin's
-   * core promise. Invokes the wizard's private slot with Qt::DirectConnection
-   * from the GUI thread, so the modal dialog blocks until it closes; the
-   * profile's Video/Output keys are snapshotted before and compared after to
-   * detect cancellation.
+   * replay buffer, or virtual camera). As a safety guard, the call is
+   * refused with WrongProfileActive unless the currently active profile
+   * is exactly `expectedProfile` — the profile the CALLER decided the
+   * wizard should run against, because the wizard rewrites the *active*
+   * profile. What that guarantees depends on the caller: the setup flow
+   * passes the Quickstart profile it created, so there the guard is what
+   * keeps the wizard off the user's real profiles; the stability dialog
+   * passes the profile active when its button was clicked (running the
+   * wizard on the checked profile is that button's purpose), so there
+   * the guard catches a profile switch between the click and the launch.
+   * Invokes the wizard's private slot with Qt::DirectConnection from the
+   * GUI thread, so the modal dialog blocks until it closes; the profile's
+   * Video/Output keys are snapshotted before and compared after to detect
+   * cancellation.
    *
-   * @param expectedProfile Name of the Quickstart profile that must be active.
+   * @param expectedProfile Name of the profile that must be active.
    */
   WizardTriggerResult
   triggerAutoConfigWizard(const std::string &expectedProfile);
@@ -261,6 +266,14 @@ public:
    */
   std::vector<std::string> activeOutputs() const;
 
+  /** Reads the registry name recorded for a marker ID; false when the
+   *  registry or the ID is absent. (Public so the registry's file
+   *  behavior — including creating its directory on a fresh install —
+   *  is unit-testable.) */
+  bool readRegisteredName(const std::string &id, std::string &outName) const;
+  /** Creates or updates the registry entry for a marker ID. */
+  bool writeRegisteredName(const std::string &id, const std::string &name);
+
 private:
   std::vector<std::string> listProfiles() const;
   std::vector<std::string> listSceneCollections() const;
@@ -273,11 +286,6 @@ private:
   /** Stamps the managed marker (fresh ID) into the named, currently
    *  active profile's config and registers ID -> name. */
   bool stampManagedProfile(const std::string &profileName);
-  /** Reads the registry name recorded for a marker ID; false when the
-   *  registry or the ID is absent. */
-  bool readRegisteredName(const std::string &id, std::string &outName) const;
-  /** Creates or updates the registry entry for a marker ID. */
-  bool writeRegisteredName(const std::string &id, const std::string &name);
 
   std::string m_lastBackupPath;
   std::string m_backupRoot;

@@ -401,15 +401,18 @@ ProfileManager::triggerAutoConfigWizard(const std::string &expectedProfile) {
   if (!checkGuiThread("triggerAutoConfigWizard"))
     return WizardTriggerResult::InvokeFailed;
 
-  // Safety guard first: the wizard rewrites the ACTIVE profile. Refuse unless
-  // the Quickstart profile created by setupQuickstartProfile is the one
-  // that's active — launching otherwise would rewrite the user's real
-  // profile, breaking the plugin's core promise.
+  // Safety guard first: the wizard rewrites the ACTIVE profile, so it
+  // may only launch when the active profile is the one the caller
+  // decided it should run against. For the setup flow that is the
+  // Quickstart profile setup created — there, this check is what keeps
+  // the wizard off the user's real profiles. The stability dialog
+  // passes the profile active when its button was clicked, so for that
+  // caller the guard catches a switch between the click and here.
   const std::string activeProfile = currentProfileName();
   if (activeProfile != expectedProfile) {
     blog(LOG_ERROR,
          "[Profile] Wizard launch refused: active profile '%s' is not the "
-         "Quickstart profile '%s'",
+         "expected profile '%s'",
          activeProfile.c_str(), expectedProfile.c_str());
     return WizardTriggerResult::WrongProfileActive;
   }
@@ -588,6 +591,23 @@ bool ProfileManager::writeRegisteredName(const std::string &id,
   const std::string path = managedRegistryPath();
   if (path.empty())
     return false;
+  // The plugin config directory may not exist yet on a fresh
+  // install, and config_open creates the file, not its parent
+  // directories — without this the registration silently fails and
+  // the profile later reads as unmanaged. (The stability ladder's
+  // state file hit the same bug; fixed there in b66ab28.)
+  {
+    std::error_code ec;
+    std::filesystem::create_directories(
+        std::filesystem::u8path(path).parent_path(), ec);
+    if (ec) {
+      blog(LOG_ERROR,
+           "[Profile] Could not create the managed-profile registry "
+           "directory for '%s': %s",
+           path.c_str(), ec.message().c_str());
+      return false;
+    }
+  }
   config_t *registry = nullptr;
   if (config_open(&registry, path.c_str(), CONFIG_OPEN_ALWAYS) !=
           CONFIG_SUCCESS ||
