@@ -377,6 +377,88 @@ TEST(SettleTracker, CancelBeforeQuietEvidenceLeavesFiles) {
   EXPECT_EQ(t.observe(o), SettleAction::LeaveFiles);
 }
 
+// ---- FrontendStopGate ----
+
+TEST(FrontendStopGate, OneStopPerActivation) {
+  FrontendStopGate g;
+  // The recording is active when settling begins, then stays
+  // "active" through the whole stopping phase: exactly one stop.
+  EXPECT_TRUE(g.observe(true));
+  EXPECT_FALSE(g.observe(true));
+  EXPECT_FALSE(g.observe(true));
+  EXPECT_FALSE(g.observe(false));
+}
+
+TEST(FrontendStopGate, LateStartStillGetsItsStop) {
+  FrontendStopGate g;
+  // Settling began before the output ever became active; when it
+  // finally starts, it is stopped — once.
+  EXPECT_FALSE(g.observe(false));
+  EXPECT_FALSE(g.observe(false));
+  EXPECT_TRUE(g.observe(true));
+  EXPECT_FALSE(g.observe(true));
+  EXPECT_FALSE(g.observe(false));
+}
+
+TEST(FrontendStopGate, FreshActivationReArms) {
+  FrontendStopGate g;
+  EXPECT_TRUE(g.observe(true));
+  EXPECT_FALSE(g.observe(false));
+  // A genuinely new activation after a full stop gets a new stop.
+  EXPECT_TRUE(g.observe(true));
+  EXPECT_FALSE(g.observe(true));
+}
+
+TEST(FrontendStopGate, NeverActiveNeverStops) {
+  FrontendStopGate g;
+  EXPECT_FALSE(g.observe(false));
+  EXPECT_FALSE(g.observe(false));
+}
+
+// ---- Pending-retest record bookkeeping ----
+
+TEST(PendingRetestWellFormed, AcceptsWhatTheLadderWrites) {
+  EXPECT_TRUE(pendingRetestWellFormed("quality", "HQ", "Small"));
+  EXPECT_TRUE(pendingRetestWellFormed("fallback", "", ""));
+}
+
+TEST(PendingRetestWellFormed, RejectsCorruptRecords) {
+  // Unknown stage (hand-edited / torn write): must not render as a
+  // quality step with an empty "( -> )" pair.
+  EXPECT_FALSE(pendingRetestWellFormed("bogus", "HQ", "Small"));
+  EXPECT_FALSE(pendingRetestWellFormed("", "HQ", "Small"));
+  EXPECT_FALSE(pendingRetestWellFormed("quality", "", "Small"));
+  EXPECT_FALSE(pendingRetestWellFormed("quality", "HQ", ""));
+}
+
+TEST(LadderIndex, AddKeepsProfilesSeparateAndDeduplicates) {
+  std::vector<std::string> index;
+  index = ladderIndexWith(index, "Profile A");
+  index = ladderIndexWith(index, "Profile B");
+  index = ladderIndexWith(index, "Profile A");
+  ASSERT_EQ(index.size(), 2u);
+  EXPECT_EQ(index[0], "Profile A");
+  EXPECT_EQ(index[1], "Profile B");
+}
+
+TEST(LadderIndex, RemoveDropsOnlyTheNamedProfile) {
+  const std::vector<std::string> index{"Profile A", "Profile B"};
+  const std::vector<std::string> out = ladderIndexWithout(index, "Profile A");
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0], "Profile B");
+  EXPECT_EQ(ladderIndexWithout(index, "Missing").size(), 2u);
+}
+
+TEST(LadderIndex, StaleIsIndexedMinusExisting) {
+  const std::vector<std::string> index{"Kept", "Deleted", "Renamed Away"};
+  const std::vector<std::string> existing{"Kept", "Other"};
+  const std::vector<std::string> stale = ladderIndexStale(index, existing);
+  ASSERT_EQ(stale.size(), 2u);
+  EXPECT_EQ(stale[0], "Deleted");
+  EXPECT_EQ(stale[1], "Renamed Away");
+  EXPECT_TRUE(ladderIndexStale(existing, existing).empty());
+}
+
 TEST(SettleTracker, CancelAfterQuietEvidenceDeletes) {
   SettleTracker t;
   EXPECT_EQ(t.observe(quietObs()), SettleAction::Wait);

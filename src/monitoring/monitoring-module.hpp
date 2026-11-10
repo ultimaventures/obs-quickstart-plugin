@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace obs_setup {
 namespace monitoring {
@@ -247,6 +248,37 @@ std::string nextRecordingQualityStep(const std::string &currentQuality);
 std::string recordingQualityDisplayName(const std::string &quality);
 
 /**
+ * @brief Whether a stored pending-retest record (see
+ * monitoring-ladder-state.hpp) is well-formed enough to act on.
+ *
+ * The state file is plugin-owned, but it is still just a file: a
+ * hand edit or a torn write must not produce a launch prompt with a
+ * nonsense stage or an empty "( -> )" quality pair. The stage must
+ * be one the ladder writes ("quality" or "fallback"), and a quality
+ * step must name both qualities. Pure function.
+ */
+bool pendingRetestWellFormed(const std::string &stage,
+                             const std::string &fromQuality,
+                             const std::string &toQuality);
+
+/** The ladder state file's profile index with profileName added
+ *  (unchanged when already present). Pure function. */
+std::vector<std::string> ladderIndexWith(const std::vector<std::string> &index,
+                                         const std::string &profileName);
+
+/** The ladder state file's profile index with profileName removed.
+ *  Pure function. */
+std::vector<std::string>
+ladderIndexWithout(const std::vector<std::string> &index,
+                   const std::string &profileName);
+
+/** Indexed profiles that no longer exist (their records are stale
+ *  and should be dropped). Pure function. */
+std::vector<std::string>
+ladderIndexStale(const std::vector<std::string> &index,
+                 const std::vector<std::string> &existingProfiles);
+
+/**
  * @brief Whether the recording encoder's preset is governed by the
  * Simple-mode preset config key — i.e. whether stepping that key
  * (settings::applyEncoderPreset) would actually change the encoder
@@ -338,6 +370,33 @@ private:
   int m_quietPolls = 0;
   bool m_done = false;
   SettleAction m_final = SettleAction::Wait;
+};
+
+/**
+ * Decides when the frontend recording stop may be issued during
+ * settling. obs_frontend_recording_stop() is NOT idempotent: the
+ * frontend passes its "already stopping" state as a force flag
+ * (OBS 31.1.1: OBSBasic::StopRecording() passes recordingStopping to
+ * the output handler, and SimpleOutput::StopRecording(force) calls
+ * obs_output_force_stop() when it is set), so a second call while the
+ * recording is still stopping force-stops it and skips the graceful
+ * muxer finish. The gate therefore issues exactly one stop per
+ * activation: on the rising edge (inactive → active) when no stop
+ * has been issued for this activation yet. Seeing the output fully
+ * inactive re-arms it, so an output that only starts after settling
+ * began (asynchronous starts) still gets its one stop. The probe's
+ * own obs_output_stop() has no such issue — libobs makes a repeat
+ * graceful stop a no-op — and is not gated here. Pure; unit-tested.
+ */
+class FrontendStopGate {
+public:
+  /** Feed the frontend recording's current active state; returns
+   *  true exactly when a stop should be issued now. */
+  bool observe(bool active);
+
+private:
+  bool m_wasActive = false;
+  bool m_stopIssued = false;
 };
 
 /** Which of the test's files cleanup may delete. */

@@ -1,5 +1,6 @@
 #include "monitoring-module.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 
@@ -174,6 +175,46 @@ std::string recordingQualityDisplayName(const std::string &quality) {
   return quality;
 }
 
+bool pendingRetestWellFormed(const std::string &stage,
+                             const std::string &fromQuality,
+                             const std::string &toQuality) {
+  if (stage == "fallback")
+    return true;
+  if (stage == "quality")
+    return !fromQuality.empty() && !toQuality.empty();
+  return false;
+}
+
+std::vector<std::string> ladderIndexWith(const std::vector<std::string> &index,
+                                         const std::string &profileName) {
+  if (std::find(index.begin(), index.end(), profileName) != index.end())
+    return index;
+  std::vector<std::string> out = index;
+  out.push_back(profileName);
+  return out;
+}
+
+std::vector<std::string>
+ladderIndexWithout(const std::vector<std::string> &index,
+                   const std::string &profileName) {
+  std::vector<std::string> out;
+  for (const std::string &name : index)
+    if (name != profileName)
+      out.push_back(name);
+  return out;
+}
+
+std::vector<std::string>
+ladderIndexStale(const std::vector<std::string> &index,
+                 const std::vector<std::string> &existingProfiles) {
+  std::vector<std::string> out;
+  for (const std::string &name : index)
+    if (std::find(existingProfiles.begin(), existingProfiles.end(), name) ==
+        existingProfiles.end())
+      out.push_back(name);
+  return out;
+}
+
 bool recordingPresetGovernedByConfig(EncoderFamily family,
                                      const std::string &recQuality) {
   // Only "Stream" quality shares the streaming encoder instance —
@@ -231,6 +272,22 @@ SettleAction SettleTracker::observe(const SettleObservation &observation) {
     return m_final;
   }
   return SettleAction::Wait;
+}
+
+bool FrontendStopGate::observe(bool active) {
+  const bool risingEdge = active && !m_wasActive;
+  m_wasActive = active;
+  if (!active) {
+    // The activation ended (or never began): re-arm so a later
+    // activation — an output that starts late — gets its own stop.
+    m_stopIssued = false;
+    return false;
+  }
+  if (risingEdge && !m_stopIssued) {
+    m_stopIssued = true;
+    return true;
+  }
+  return false;
 }
 
 CleanupPlan planCleanup(bool fallbackMode, bool haveRecordingPath,

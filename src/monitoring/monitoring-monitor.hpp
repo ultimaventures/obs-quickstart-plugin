@@ -156,11 +156,14 @@ struct TestOutcome {
  * the stepping cursor and the restore target; the LIVE readback from
  * the running encoder is what gets reported as measured.
  *
- * Cancel semantics: a cancel in ANY state finishes the check as
- * Cancelled after cleanup — it never evaluates a verdict and never
- * starts another attempt. (Cleanup evidence rules are separate and
- * unchanged: a cancel during settling still needs the settle
- * tracker's full quiet evidence before anything is deleted.)
+ * Cancel semantics: a cancel finishes the check as Cancelled after
+ * cleanup — it never evaluates a verdict and never starts another
+ * attempt. One exception: when an error finish is already pending
+ * (the attempt had failed on its own before the cancel landed), the
+ * error stands — it is the more useful report. (Cleanup evidence
+ * rules are separate and unchanged: a cancel during settling still
+ * needs the settle tracker's full quiet evidence before anything is
+ * deleted.)
  *
  * Cleanup follows planCleanup() + SettleTracker (both pure, both
  * unit-tested): only files proven test-created are deleted (the
@@ -242,6 +245,11 @@ private:
    *  verdict path: evaluate the attempt (normal), or finish directly
    *  with the given kind/detail (cancel / error). */
   void enterSettling();
+  /** Issues the frontend recording stop when FrontendStopGate says
+   *  this activation's one graceful stop is due (and logs it, so a
+   *  settle shows exactly one stop per activation). No-op when the
+   *  frontend is not part of this check. */
+  void stopFrontendRecordingOnce();
   void finish(TestOutcome::Kind kind, const std::string &detail = "");
   /** The exact cleanup candidates for this attempt, path -> size. */
   std::map<std::string, uint64_t> trackedFiles() const;
@@ -331,6 +339,9 @@ private:
   bool m_dirSnapshotTaken = false;
   std::map<std::string, uint64_t> m_lastTrackedFiles;
   SettleTracker m_settleTracker;
+  /** One graceful frontend stop per activation during settling —
+   *  see FrontendStopGate for why repeats are harmful. */
+  FrontendStopGate m_frontendStopGate;
   /** Pending finish for attempts that end through settling without a
    *  verdict evaluation (cancel / error); kEvaluate = normal path. */
   enum class Pending { Evaluate, FinishInstead } m_pending = Pending::Evaluate;

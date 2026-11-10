@@ -81,7 +81,8 @@ StabilityMonitor::StabilityMonitor(QObject *parent)
 StabilityMonitor::~StabilityMonitor() {
   m_timer->stop();
   m_probe.stop();
-  if (m_state == State::Recording && obs_frontend_recording_active())
+  if (m_state == State::Recording && frontendExpected() &&
+      obs_frontend_recording_active())
     obs_frontend_recording_stop();
   if (!m_testFilePath.empty() && m_state != State::Idle) {
     // No event loop remains to settle safely; never guess-delete from
@@ -256,6 +257,7 @@ void StabilityMonitor::beginAttempt() {
   m_siblingExpected = false;
   m_lastTrackedFiles.clear();
   m_settleTracker = SettleTracker{};
+  m_frontendStopGate = FrontendStopGate{};
   m_pending = Pending::Evaluate;
   config_t *config = obs_frontend_get_profile_config();
   m_autoRemux = config && config_get_bool(config, "Video", "AutoRemux");
@@ -498,9 +500,21 @@ void StabilityMonitor::cancel() {
   }
 }
 
-void StabilityMonitor::enterSettling() {
-  if (obs_frontend_recording_active())
+void StabilityMonitor::stopFrontendRecordingOnce() {
+  // Fed through the gate only when the frontend is part of this
+  // check: in streaming-only mode an active frontend recording is
+  // the USER's own — never ours to stop.
+  if (frontendExpected() &&
+      m_frontendStopGate.observe(obs_frontend_recording_active())) {
+    blog(LOG_INFO, "[Monitoring] Stopping the test recording");
     obs_frontend_recording_stop();
+  }
+}
+
+void StabilityMonitor::enterSettling() {
+  // The one graceful stop for this activation (see pollSettling for
+  // why repeats are harmful).
+  stopFrontendRecordingOnce();
   if (m_probeStarted)
     m_probe.stopOutput();
   m_state = State::Settling;
@@ -580,16 +594,21 @@ void StabilityMonitor::onTick() {
 }
 
 bool StabilityMonitor::pollSettling() {
-  // Output starts are asynchronous: a cancel (or the did-not-start
-  // timeout) can enter settling before an output ever became active,
-  // and a stop issued then would have nothing to stop. Keep issuing
-  // the stops while finishing so a late-starting output is stopped
-  // instead of being left running. The frontend stop is gated on the
-  // frontend being part of this check: in streaming-only mode an
-  // active frontend recording is the USER's own, and stopping it
-  // from here would destroy their recording, not ours.
-  if (frontendExpected() && obs_frontend_recording_active())
-    obs_frontend_recording_stop();
+  // The frontend stop goes through FrontendStopGate: exactly one
+  // graceful stop per activation. Repeating obs_frontend_recording_
+  // stop() while the recording is still stopping would force-stop
+  // it — the frontend passes its already-stopping state as a force
+  // flag, skipping the graceful muxer finish. (The repeated-stop
+  // advice this replaces was true of libobs' obs_output_stop(),
+  // which the probe below uses and which IS a no-op while stopping.)
+  // Output starts are asynchronous, so the gate re-arms whenever
+  // the output is seen fully inactive: an output that only starts
+  // after settling began still gets its one stop instead of being
+  // left running. The gate is fed only when the frontend is part of
+  // this check: in streaming-only mode an active frontend recording
+  // is the USER's own, and stopping it from here would destroy
+  // their recording, not ours.
+  stopFrontendRecordingOnce();
   if (m_probeStarted)
     m_probe.stopOutput();
   const auto now = trackedFiles();
